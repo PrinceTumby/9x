@@ -70,7 +70,10 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     logger.debug("Heap initialised", .{});
     const initrd = args.initrd.ptr[0..args.initrd.size];
     outer: {
-        if (args.framebuffers.len == 0) break :outer;
+        if (args.framebuffers.len < 1) {
+            logger.debug("No framebuffer found", .{});
+            break :outer;
+        }
         fb = Framebuffer.init(args.framebuffers.ptr[0]) catch |err| {
             logger.debug("Framebuffer failed initialisation: {}", .{err});
             break :outer;

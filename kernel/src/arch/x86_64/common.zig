@@ -41,7 +41,7 @@ pub const KernelArgs = extern struct {
     },
 
     pub const Framebuffer = extern struct {
-        ptr: ?[*]volatile u32,
+        ptr: [*]volatile u32,
         size: u32,
         width: u32,
         height: u32,

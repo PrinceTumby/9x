@@ -18,7 +18,7 @@ TEXT_DISPLAY_END = 0xffffffff5fffffff;
 
 PHDRS
 {
-    /* stack PT_LOAD; */
+    stack PT_LOAD;
     init PT_LOAD;
     text PT_LOAD;
     data PT_LOAD;
@@ -27,29 +27,29 @@ PHDRS
 }
 SECTIONS
 {
-    /* . = STACK_BASE; */
-    /* .stack (NOLOAD) : { */
-    /*     . = STACK_BASE + 0xFF0; */
-    /* } :stack */
+    . = STACK_BASE;
+    .stack (NOLOAD) : {
+        . = STACK_BASE + 0xFF0;
+    } :stack
     . = KERNEL_BASE;
     .init : {
         KEEP(*(.init*))
     } :init
-    .text : {
+    .text ALIGN(4K) : {
         KEEP(*(.multiboot*))
         *(.text*)
     } :text
-    .data : {
+    .data ALIGN(4K) : {
         *(.data*)
     } :data
-    .limine_reqs : {
+    .limine_reqs ALIGN(4K) : {
         KEEP(*(.limine_reqs))
         QUAD(0)
     } :rodata
     .rodata : {
         *(.rodata*)
     } :rodata
-    .bss : {
+    .bss ALIGN(4K) : {
         *(.bss*)
         *(COMMON)
     } :bss

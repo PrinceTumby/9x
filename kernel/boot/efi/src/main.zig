@@ -172,7 +172,7 @@ pub fn main() void {
             fb_height = info.vertical_resolution;
             fb_scanline_length = info.pixels_per_scan_line;
             framebuffer = Framebuffer.init(.{
-                .ptr = fb_ptr,
+                .ptr = fb_ptr.?,
                 .size = fb_size,
                 .width = fb_width,
                 .height = fb_height,
@@ -660,6 +660,24 @@ pub fn main() void {
         *KernelArgs,
         @alignCast(@alignOf(KernelArgs), kernel_args_phys_ptr),
     );
+    const framebuffers_ptr = @intToPtr(
+        [*]KernelArgs.Framebuffer,
+        std.mem.alignForward(
+            @ptrToInt(kernel_args_ptr) + @sizeOf(KernelArgs),
+            @alignOf(KernelArgs),
+        ),
+    );
+    if (fb_ptr) |framebuffer_pointer| {
+        framebuffers_ptr[0] = .{
+            .ptr = framebuffer_pointer,
+            .size = fb_size,
+            .width = fb_width,
+            .height = fb_height,
+            .scanline = fb_scanline_length,
+            .color_format = fb_color_format,
+            .color_bitmask = fb_color_bitmask,
+        };
+    }
     kernel_args_ptr.* = KernelArgs{
         .kernel_elf = .{
             .ptr = kernel.ptr,
@@ -685,15 +703,19 @@ pub fn main() void {
             .efi_ptr = efi_ptr,
             .mp_ptr = 0,
         },
-        .fb = .{
-            .ptr = fb_ptr,
-            .size = fb_size,
-            .width = fb_width,
-            .height = fb_height,
-            .scanline = fb_scanline_length,
-            .color_format = fb_color_format,
-            .color_bitmask = fb_color_bitmask,
+        .framebuffers = .{
+            .ptr = framebuffers_ptr,
+            .len = if (fb_ptr != null) 1 else 0,
         },
+        // .fb = .{
+        //     .ptr = fb_ptr,
+        //     .size = fb_size,
+        //     .width = fb_width,
+        //     .height = fb_height,
+        //     .scanline = fb_scanline_length,
+        //     .color_format = fb_color_format,
+        //     .color_bitmask = fb_color_bitmask,
+        // },
     };
     logger.info("kernel arguments initialised", .{});
 

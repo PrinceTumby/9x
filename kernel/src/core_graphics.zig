@@ -17,7 +17,7 @@ pub const FrameBuffer = struct {
 
     pub fn init(args: FramebufferArgs) !FrameBuffer {
         const size: u32 = args.height * args.scanline;
-        const fb_phys_addr = @ptrToInt(args.ptr orelse return error.FramebufferNotFound);
+        const fb_phys_addr = @ptrToInt(args.ptr);
         // Map the framebuffer in upper memory with write combining flags
         try page_allocator.offsetMapMem(
             fb_phys_addr,

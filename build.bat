@@ -59,6 +59,7 @@ wsl mmd -i out/efi.img "::/EFI/BOOT"
 wsl mmd -i out/efi.img "::/boot"
 wsl mcopy -i out/efi.img kernel/boot/efi/out/bootx64.efi "::/EFI/BOOT"
 wsl mcopy -i out/efi.img out/initrd.cpio "::/boot"
+wsl mcopy -i out/efi.img misc/startup_efi.nsh "::/startup.nsh"
 if %errorlevel% NEQ 0 (
     goto :compfailed
 )

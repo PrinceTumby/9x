@@ -73,7 +73,7 @@ pub const FrameBuffer = struct {
 
     pub fn init(args: FramebufferArgs) FrameBuffer {
         return FrameBuffer{
-            .__fb = args.ptr.?[0..args.size],
+            .__fb = args.ptr[0..args.size],
             .width = args.width,
             .height = args.height,
             .scanline = args.scanline,

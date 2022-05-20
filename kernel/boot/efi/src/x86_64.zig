@@ -383,10 +383,13 @@ pub const KernelArgs = extern struct {
         mp_ptr: usize,
         smbi_ptr: usize,
     },
-    fb: Framebuffer,
+    framebuffers: extern struct {
+        ptr: [*]const Framebuffer,
+        len: usize,
+    },
 
     pub const Framebuffer = extern struct {
-        ptr: ?[*]volatile u8,
+        ptr: [*]volatile u8,
         size: u32,
         width: u32,
         height: u32,
