@@ -1,6 +1,9 @@
 const acpi = @import("../acpi.zig");
 const AcpiTableHeader = acpi.AcpiTableHeader;
-usingnamespace @import("acpica_types.zig");
+const types = @import("acpica_types.zig");
+const AcpiStatus = types.AcpiStatus;
+const AcpiBoolean = types.AcpiBoolean;
+const AcpiTableDesc = types.AcpiTableDesc;
 
 // TODO Add descriptions and fix signatures
 
@@ -30,8 +33,8 @@ pub const table_manager = struct {
     extern fn AcpiFindRootPointer(table_address: usize) u32;
     extern fn AcpiInstallTable(address: u64, is_address_physical: AcpiBoolean) u32;
     extern fn AcpiLoadTables() u32;
-    extern fn AcpiLoadTable(table: *c_void) u32;
-    extern fn AcpiUnloadParentTable(object: *c_void) u32;
+    extern fn AcpiLoadTable(table: *anyopaque) u32;
+    extern fn AcpiUnloadParentTable(object: *anyopaque) u32;
     extern fn AcpiGetTableHeader(
         signature: *const [4]u8,
         instance: u32,
@@ -40,11 +43,11 @@ pub const table_manager = struct {
     extern fn AcpiGetTable(
         signature: *const [4]u8,
         instance: u32,
-        out_table: **c_void,
+        out_table: **anyopaque,
     ) u32;
     extern fn AcpiGetTableByIndex(table_index: u32, out_table: *?*AcpiTableHeader) u32;
-    extern fn AcpiInstallTableHandler(handler: *c_void, context: *c_void) u32;
-    extern fn AcpiRemoveTableHandler(handler: *c_void) u32;
+    extern fn AcpiInstallTableHandler(handler: *anyopaque, context: *anyopaque) u32;
+    extern fn AcpiRemoveTableHandler(handler: *anyopaque) u32;
 
     // Function wrappers
 
@@ -73,7 +76,7 @@ pub const table_manager = struct {
         return @bitCast(AcpiStatus, AcpiGetTable(
             Table.table_signature,
             instance,
-            @ptrCast(**c_void, out_ptr),
+            @ptrCast(**anyopaque, out_ptr),
         ));
     }
 };

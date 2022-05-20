@@ -15,7 +15,7 @@ pub const KernelArgs = extern struct {
         /// All values are undefined if color_info_format != .Bitmask
         color_bitmask: ColorBitmask = undefined,
 
-        pub const ColorFormat = extern enum(u32) {
+        pub const ColorFormat = enum(u32) {
             /// Red, Green, Blue, Reserved - 8 bits per color
             RGBR8,
             /// Blue, Green, Red, Reserved - 8 bits per color
@@ -25,7 +25,7 @@ pub const KernelArgs = extern struct {
 
         /// Bitmasks for specifying color positions in u32.
         /// All values are undefined if color_format != .Bitmask
-        pub const ColorBitmask = extern struct {
+        pub const ColorBitmask = struct {
             red_mask: u32,
             green_mask: u32,
             blue_mask: u32,

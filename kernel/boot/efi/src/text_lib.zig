@@ -176,8 +176,6 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                         var line_i: u8 = 0;
                         while (line_i < self.font.height) : (line_i += 1) {
                             var line = char_bitmap[line_i];
-                            const char_base_x = self.cursor_x * self.font.width;
-                            const char_base_y = self.cursor_y * self.font.height;
                             comptime var bit: u8 = 0;
                             inline while (bit < 8) : (bit += 1) {
                                 line >>= 1;

@@ -2,7 +2,7 @@
 
 // TODO Clean this up, document what GDT flags are for
 
-const DescriptorTablePointer = @import("../internals.zig").DescriptorTablePointer;
+const DescriptorTablePointer = @import("common.zig").DescriptorTablePointer;
 const tss_module = @import("tss.zig");
 const TaskStateSegment = tss_module.TaskStateSegment;
 

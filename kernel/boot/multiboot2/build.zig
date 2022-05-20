@@ -10,9 +10,10 @@ pub fn build(b: *Builder, mode: Mode, target: CrossTarget) *LibExeObjStep {
     multiboot2_elf.setBuildMode(mode);
     multiboot2_elf.setTarget(target);
     multiboot2_elf.addAssemblyFile("boot/multiboot2/src/entry.s");
-    multiboot2_elf.setLinkerScriptPath("boot/multiboot2/build/link.ld");
+    multiboot2_elf.setLinkerScriptPath(.{ .path = "boot/multiboot2/build/link.ld" });
     multiboot2_elf.setOutputDir("boot/multiboot2/out");
     multiboot2_elf.disable_stack_probing = true;
+    multiboot2_elf.red_zone = false;
     multiboot2_elf.strip = true;
     return multiboot2_elf;
 }

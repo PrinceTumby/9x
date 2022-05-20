@@ -16,7 +16,7 @@ pub const logging = @import("logging.zig");
 pub const misc = @import("misc.zig");
 const initPageAllocator = arch.page_allocation.initPageAllocator;
 const page_allocator = arch.page_allocation.page_allocator_ptr;
-const heap_allocator = heap.heap_allocator_ptr;
+const heap_allocator = heap.kernel_heap_allocator.allocator();
 
 const font_path = "etc/kernel/standard_font.psf";
 
@@ -115,7 +115,7 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     };
     // TODO Add in validation of addresses and lengths
     // Load program segments into memory, mapping and setting flags
-    for (program_elf.program_header) |*entry, entry_i| {
+    for (program_elf.program_header) |*entry| {
         if (entry.type != .Loadable) continue;
         // Get segment in program file
         const segment_slice = @ptrCast(
@@ -248,6 +248,7 @@ fn printMessageTaskFunc(args: *PrintMessageTaskArgs) void {
     // logging.log(.info, .print_message_task, "{s}", .{args.message});
 }
 
-fn testTaskFunction(_args: *scheduling.VoidType) void {
+fn testTaskFunction(args: *scheduling.VoidType) void {
+    _ = args;
     logger.info("Hello world!", .{});
 }

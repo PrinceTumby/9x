@@ -8,20 +8,20 @@ const Terminal = limine.LimineTerminal;
 
 const logger = std.log.scoped(.limine_stub);
 
-export var entry_point_request_ptr linksection(".limine_reqs") = &entry_point_request;
+export var entry_point_request_ptr = &entry_point_request;
 export var entry_point_request align(8) = limine.requests.EntryPoint{
     .entry = limine_entry,
 };
 
-export var terminal_request_ptr linksection(".limine_reqs") = &terminal_request;
+export var terminal_request_ptr = &terminal_request;
 export var terminal_request align(8) = limine.requests.Terminal{
     .callback = terminal_callback,
 };
 
-export var framebuffer_request_ptr linksection(".limine_reqs") = &framebuffer_request;
+export var framebuffer_request_ptr = &framebuffer_request;
 export var framebuffer_request align(8) = limine.requests.Framebuffer{};
 
-export var kernel_file_request_ptr linksection(".limine_reqs") = &kernel_file_request;
+export var kernel_file_request_ptr = &kernel_file_request;
 export var kernel_file_request align(8) = limine.requests.KernelFile{};
 
 export var module_request_ptr linksection(".limine_reqs") = &module_request;
@@ -40,29 +40,35 @@ export var memory_map_request_ptr linksection(".limine_reqs") = &memory_map_requ
 export var memory_map_request align(8) = limine.requests.MemoryMap{};
 
 fn terminal_callback(
-    _terminal: *limine.LimineTerminal,
-    _type: u64,
-    _param1: u64,
-    _param2: u64,
-    _param3: u64,
-) callconv(.C) void {}
+    terminal: *limine.LimineTerminal,
+    event_type: u64,
+    param1: u64,
+    param2: u64,
+    param3: u64,
+) callconv(.C) void {
+    _ = terminal;
+    _ = event_type;
+    _ = param1;
+    _ = param2;
+    _ = param3;
+}
 
 pub const terminal_writer = struct {
     var write_buffer: [256]u8 = undefined;
-    var terminalWriteFunc: fn (*c_void, [*]const u8, u64) callconv(.C) void = undefined;
+    var terminalWriteFunc: fn (*anyopaque, [*]const u8, u64) callconv(.C) void = undefined;
 
     pub const Error = AbstractWriter.Error;
 
-    pub inline fn writeAll(terminal: *c_void, bytes: []const u8) Error!void {
+    pub inline fn writeAll(terminal: *anyopaque, bytes: []const u8) Error!void {
         terminalWriteFunc(terminal, bytes.ptr, bytes.len);
     }
 
-    pub fn writeByte(terminal: *c_void, byte: u8) Error!void {
+    pub fn writeByte(terminal: *anyopaque, byte: u8) Error!void {
         const char = [1]u8{byte};
         terminalWriteFunc(terminal, &char, 1);
     }
 
-    pub fn writeByteNTimes(terminal: *c_void, byte: u8, n: usize) Error!void {
+    pub fn writeByteNTimes(terminal: *anyopaque, byte: u8, n: usize) Error!void {
         std.mem.set(u8, write_buffer[0..], byte);
         var remaining: usize = n;
         while (remaining > 0) {
@@ -74,7 +80,7 @@ pub const terminal_writer = struct {
 
     pub fn createAbstractWriter(terminal: *Terminal) AbstractWriter {
         return AbstractWriter{
-            .writer_pointer = @ptrCast(*c_void, terminal),
+            .writer_pointer = @ptrCast(*anyopaque, terminal),
             .writeAllFunc = writeAll,
             .writeByteFunc = writeByte,
             .writeByteNTimesFunc = writeByteNTimes,

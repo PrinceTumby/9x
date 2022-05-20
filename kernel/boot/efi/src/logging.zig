@@ -104,7 +104,7 @@ const ScreenWriter = struct {
 
     pub fn writeByte(self: Self, byte: u8) Error!void {
         const char = [1]u8{byte};
-        self.text_display.write(&byte);
+        self.text_display.write(&char);
     }
 
     pub fn writeByteNTimes(self: Self, byte: u8, n: usize) Error!void {

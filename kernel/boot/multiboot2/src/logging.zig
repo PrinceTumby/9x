@@ -13,14 +13,14 @@ pub const BochsWriter = struct {
         asm volatile ("outb %[byte], $0xE9" :: [byte] "{al}" (byte));
     }
 
-    pub fn writeAll(self: BochsWriter, bytes: []const u8) Error!void {
+    pub fn writeAll(_: BochsWriter, bytes: []const u8) Error!void {
         for (bytes) |byte| {
             if (byte == '\n') writeByteToPort('\r');
             writeByteToPort(byte);
         }
     }
 
-    pub fn writeByte(self: BochsWriter, byte: u8) Error!void {
+    pub fn writeByte(_: BochsWriter, byte: u8) Error!void {
         if (byte == '\n') writeByteToPort('\r');
         writeByteToPort(byte);
     }
@@ -45,14 +45,14 @@ pub fn SerialWriter(comptime port: type) type {
 
         pub const Error = error {};
 
-        pub fn writeAll(self: Self, bytes: []const u8) Error!void {
+        pub fn writeAll(_: Self, bytes: []const u8) Error!void {
             for (bytes) |byte| {
                 if (byte == '\n') port.writeByte('\r');
                 port.writeByte(byte);
             }
         }
 
-        pub fn writeByte(self: Self, byte: u8) Error!void {
+        pub fn writeByte(_: Self, byte: u8) Error!void {
             if (byte == '\n') port.writeByte('\r');
             port.writeByte(byte);
         }
@@ -75,11 +75,11 @@ pub const LogWriter = struct {
 
     pub const Error = error {};
 
-    pub fn writeAll(self: LogWriter, bytes: []const u8) Error!void {
+    pub fn writeAll(_: LogWriter, bytes: []const u8) Error!void {
         logRaw("{s}", .{bytes});
     }
 
-    pub fn writeByte(self: LogWriter, byte: u8) Error!void {
+    pub fn writeByte(_: LogWriter, byte: u8) Error!void {
         logRaw("{c}", .{byte});
     }
     

@@ -18,7 +18,7 @@ pub fn build(b: *Builder) void {
         .os_tag = Target.Os.Tag.freestanding,
         .abi = Target.Abi.none,
     });
-    kernel.setLinkerScriptPath("src/arch/riscv64/build/link.ld");
+    kernel.setLinkerScriptPath(.{ .path = "src/arch/riscv64/build/link.ld" });
     kernel.setOutputDir("out");
     kernel.force_pic = true;
     kernel.strip = false;

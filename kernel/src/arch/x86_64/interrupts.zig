@@ -5,7 +5,7 @@ const logger = std.log.scoped(.x86_64_interrupt);
 const root = @import("root");
 const smp = root.smp;
 const heap = root.heap;
-const heap_allocator = heap.heap_allocator_ptr;
+const heap_allocator = heap.kernel_heap_allocator.allocator();
 const platform = root.arch.platform;
 const tls = @import("tls.zig");
 const pit = @import("clocks/pit.zig");
@@ -14,6 +14,7 @@ const apic_timer = @import("clocks/apic_timer.zig");
 const tss = @import("tss.zig");
 const idt = @import("idt.zig");
 const InterruptFrame = idt.InterruptFrame;
+const InterruptFrameErrCode = idt.InterruptFrameErrCode;
 const InterruptDescriptorTable = idt.InterruptDescriptorTable;
 
 /// Handlers for CPU exceptions
@@ -98,35 +99,31 @@ const exception_handlers = struct {
         );
     }
 
-    export fn breakpoint(
-        interrupt_frame: *const InterruptFrame,
-    ) callconv(.Interrupt) void {
+    export fn breakpoint(_: InterruptFrame) callconv(.Interrupt) void {
         logger.info("exception - breakpoint", .{});
     }
 
-    extern fn divideByZero(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn debug(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn nonMaskableInterrupt(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn overflow(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn boundRangeExceeded(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn invalidOpcode(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn deviceNotAvailable(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn doubleFault(*const InterruptFrame, u32) callconv(.Interrupt) noreturn;
-    extern fn invalidTss(*const InterruptFrame, u32) callconv(.Interrupt) void;
-    extern fn segmentNotPresent(*const InterruptFrame, u32) callconv(.Interrupt) void;
-    extern fn stackSegmentFault(*const InterruptFrame, u32) callconv(.Interrupt) void;
-    extern fn generalProtectionFault(*const InterruptFrame, u32) callconv(.Interrupt) void;
-    extern fn pageFault(*const InterruptFrame, u32) callconv(.Interrupt) void;
-    extern fn x87FloatingPoint(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn alignmentException(*const InterruptFrame, u32) callconv(.Interrupt) void;
-    extern fn machineCheck(*const InterruptFrame) callconv(.Interrupt) noreturn;
-    extern fn simdFloatingPoint(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn virtualization(*const InterruptFrame) callconv(.Interrupt) void;
-    extern fn security(*const InterruptFrame, u32) callconv(.Interrupt) void;
+    extern fn divideByZero(InterruptFrame) callconv(.Interrupt) void;
+    extern fn debug(InterruptFrame) callconv(.Interrupt) void;
+    extern fn nonMaskableInterrupt(InterruptFrame) callconv(.Interrupt) void;
+    extern fn overflow(InterruptFrame) callconv(.Interrupt) void;
+    extern fn boundRangeExceeded(InterruptFrame) callconv(.Interrupt) void;
+    extern fn invalidOpcode(InterruptFrame) callconv(.Interrupt) void;
+    extern fn deviceNotAvailable(InterruptFrame) callconv(.Interrupt) void;
+    extern fn doubleFault(InterruptFrameErrCode) callconv(.Interrupt) noreturn;
+    extern fn invalidTss(InterruptFrameErrCode) callconv(.Interrupt) void;
+    extern fn segmentNotPresent(InterruptFrameErrCode) callconv(.Interrupt) void;
+    extern fn stackSegmentFault(InterruptFrameErrCode) callconv(.Interrupt) void;
+    extern fn generalProtectionFault(InterruptFrameErrCode) callconv(.Interrupt) void;
+    extern fn pageFault(InterruptFrameErrCode) callconv(.Interrupt) void;
+    extern fn x87FloatingPoint(InterruptFrame) callconv(.Interrupt) void;
+    extern fn alignmentException(InterruptFrameErrCode) callconv(.Interrupt) void;
+    extern fn machineCheck(InterruptFrame) callconv(.Interrupt) noreturn;
+    extern fn simdFloatingPoint(InterruptFrame) callconv(.Interrupt) void;
+    extern fn virtualization(InterruptFrame) callconv(.Interrupt) void;
+    extern fn security(InterruptFrameErrCode) callconv(.Interrupt) void;
 
-    pub fn dummyApicEoiHandler(
-        _interrupt_frame: *const InterruptFrame,
-    ) callconv(.Interrupt) void {
+    pub fn dummyApicEoiHandler(_: InterruptFrame) callconv(.Interrupt) void {
         const bsp_apic = tls.getThreadLocalVariable("local_apic").apic;
         bsp_apic.signalEoi();
     }
@@ -363,7 +360,6 @@ pub const apic = struct {
     }
 
     pub fn unregisterLegacyIrq(irq: u4) void {
-        const bsp_apic = tls.getThreadLocalVariable("local_apic").apic;
         var polarity: IoApic.RedirectionEntry.Polarity = .High;
         var trigger_mode: IoApic.RedirectionEntry.TriggerMode = .EdgeSensitive;
         const redirected_irq = blk: for (interrupt_source_overrides.items) |override| {
@@ -373,7 +369,6 @@ pub const apic = struct {
                 break :blk override.global_system_interrupt;
             }
         } else irq;
-        const bsp_id = bsp_apic.readRegister(LocalApic.registers.LapicIdRegister);
         // Set entry in I/O APIC
         for (io_apics.items) |io_apic| {
             const start_irq = io_apic.global_system_interrupt_base;

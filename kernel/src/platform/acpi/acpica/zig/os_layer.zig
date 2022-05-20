@@ -3,7 +3,7 @@ const root = @import("root");
 const logging = root.logging;
 const LogWriter = logging.LogWriter;
 const page_allocator = root.arch.page_allocation.page_allocator_ptr;
-const heap_allocator = root.heap.heap_allocator_ptr;
+const heap_allocator = root.heap.kernel_heap_allocator.allocator();
 const acpica = @import("../../acpica.zig");
 const AcpiStatus = acpica.AcpiStatus;
 const AcpiBoolean = acpica.AcpiBoolean;
@@ -26,20 +26,20 @@ export fn AcpiOsGetRootPointer() u64 {
     return rsdp_pointer;
 }
 
-export fn AcpiOsPredefinedOverride(predefined_object: usize, new_value: *?*c_void) AcpiStatus {
+export fn AcpiOsPredefinedOverride(_: usize, new_value: *?*anyopaque) AcpiStatus {
     new_value.* = null;
     return AcpiStatus.Ok;
 }
 
-export fn AcpiOsTableOverride(existing_table: usize, new_table: *?*c_void) AcpiStatus {
+export fn AcpiOsTableOverride(_: usize, new_table: *?*anyopaque) AcpiStatus {
     new_table.* = null;
     return AcpiStatus.Ok;
 }
 
 export fn AcpiOsPhysicalTableOverride(
-    existing_table: *c_void,
-    new_table: *?*c_void,
-    new_length: u32,
+    _: *anyopaque,
+    new_table: *?*anyopaque,
+    _: u32,
 ) AcpiStatus {
     new_table.* = null;
     return AcpiStatus.Ok;
@@ -47,12 +47,12 @@ export fn AcpiOsPhysicalTableOverride(
 
 // Memory management
 
-export fn AcpiOsMapMemory(physical_address: u64, length: usize) usize {
+export fn AcpiOsMapMemory(physical_address: u64, _: usize) usize {
     // SAFETY: Entirety of physical memory is identity mapped, so this should be fine
     return physical_address;
 }
 
-export fn AcpiOsUnmapMemory(physical_address: u64, length: usize) AcpiStatus {
+export fn AcpiOsUnmapMemory(_: u64, _: usize) AcpiStatus {
     // No mapping is done in AcpiOsMapMemory, so we do nothing here
     return AcpiStatus.Ok;
 }
@@ -121,7 +121,7 @@ export fn AcpiOsReleaseMutex(handle_maybe: ?*bool) void {
 export fn AcpiOsCreateSemaphore(
     max_units: u32,
     initial_units: u32,
-    out_handle_maybe: ?*?*c_void,
+    out_handle_maybe: ?*?*anyopaque,
 ) AcpiStatus {
     if (initial_units > max_units) return AcpiStatus.BadParameter;
     const out_handle = out_handle_maybe orelse return AcpiStatus.BadParameter;
@@ -134,12 +134,12 @@ export fn AcpiOsCreateSemaphore(
     return AcpiStatus.Ok;
 }
 
-export fn AcpiOsDeleteSemaphore(handle: ?*c_void) AcpiStatus {
+export fn AcpiOsDeleteSemaphore(handle: ?*anyopaque) AcpiStatus {
     logger.debug("Semaphore {*} destroyed", .{handle});
     return AcpiStatus.Ok;
 }
 
-export fn AcpiOsWaitSemaphore(handle: ?*c_void, units: u32, timeout: u16) AcpiStatus {
+export fn AcpiOsWaitSemaphore(handle: ?*anyopaque, units: u32, timeout: u16) AcpiStatus {
     logger.debug("Semaphore {*} waited, {} units, {}ms timeout", .{
         handle,
         units,
@@ -148,28 +148,28 @@ export fn AcpiOsWaitSemaphore(handle: ?*c_void, units: u32, timeout: u16) AcpiSt
     return AcpiStatus.Ok;
 }
 
-export fn AcpiOsSignalSemaphore(handle: *c_void, units: u32) AcpiStatus {
+export fn AcpiOsSignalSemaphore(handle: *anyopaque, units: u32) AcpiStatus {
     logger.debug("Semaphore {*} signalled, {} units", .{handle, units});
     return AcpiStatus.Ok;
 }
 
-export fn AcpiOsCreateLock(out_handle_maybe: ?*?*c_void) AcpiStatus {
+export fn AcpiOsCreateLock(out_handle_maybe: ?*?*anyopaque) AcpiStatus {
     const out_handle = out_handle_maybe orelse return AcpiStatus.BadParameter;
     out_handle.* = null;
     logger.debug("Lock {*} created", .{out_handle});
     return AcpiStatus.Ok;
 }
 
-export fn AcpiOsDeleteLock(handle: ?*c_void) void {
+export fn AcpiOsDeleteLock(handle: ?*anyopaque) void {
     logger.debug("Lock {*} destroyed", .{handle});
 }
 
-export fn AcpiOsAcquireLock(handle: ?*c_void) usize {
+export fn AcpiOsAcquireLock(_: ?*anyopaque) usize {
     // logger.debug("Lock {*} acquired", .{handle});
     return 0;
 }
 
-export fn AcpiOsReleaseLock(handle: ?*c_void, flags: usize) void {
+export fn AcpiOsReleaseLock(_: ?*anyopaque, _: usize) void {
     // logger.debug("Lock {*} released", .{handle});
 }
 
@@ -226,7 +226,7 @@ export fn AcpiCustomOsPrintSignedInt(
     std.fmt.formatInt(
         num,
         10,
-        false,
+        .lower,
         std.fmt.FormatOptions{
             .precision = @as(?u64, if (precision != 1) precision else null),
             .width = @as(?u64, if (width != 0) width else null),
@@ -254,7 +254,7 @@ export fn AcpiCustomOsPrintInt(
     std.fmt.formatInt(
         num,
         base,
-        if (uppercase == 0) false else true,
+        if (uppercase == 0) std.fmt.Case.lower else std.fmt.Case.upper,
         std.fmt.FormatOptions{
             .precision = @as(?u64, if (precision != 0) precision else null),
             .width = @as(?u64, if (width != 0) width else null),
@@ -280,7 +280,7 @@ export fn AcpiOsGetThreadId() u64 {
     return 1;
 }
 
-export fn AcpiOsExecute(execute_type: usize, function: *c_void, context: *c_void) AcpiStatus {
+export fn AcpiOsExecute(_: usize, _: *anyopaque, _: *anyopaque) AcpiStatus {
     @panic("AcpiOsExecute unimplemented");
 }
 
@@ -296,35 +296,35 @@ export fn AcpiOsWaitEventsComplete() void {
     @panic("AcpiOsWaitEventsComplete unimplemented");
 }
 
-export fn AcpiOsAcquireGlobalLock(lock: *u32) AcpiStatus {
+export fn AcpiOsAcquireGlobalLock(_: *u32) AcpiStatus {
     @panic("AcpiOsAcquireGlobalLock unimplemented");
 }
 
-export fn AcpiOsReleaseGlobalLock(lock: *u32) AcpiStatus {
+export fn AcpiOsReleaseGlobalLock(_: *u32) AcpiStatus {
     @panic("AcpiOsReleaseGlobalLock unimplemented");
 }
 
-export fn AcpiOsInstallInterruptHandler(interrupt_level: u32, handler: *c_void, context: *c_void) AcpiStatus {
+export fn AcpiOsInstallInterruptHandler(_: u32, _: *anyopaque, _: *anyopaque) AcpiStatus {
     @panic("AcpiOsInstallInterruptHandler unimplemented");
 }
 
-export fn AcpiOsRemoveInterruptHandler(interrupt_number: u32, handler: *c_void) AcpiStatus {
+export fn AcpiOsRemoveInterruptHandler(_: u32, _: *anyopaque) AcpiStatus {
     @panic("AcpiOsRemoveInterruptHandler unimplemented");
 }
 
-export fn AcpiOsReadMemory(address: usize, value: *u64, width: u32) AcpiStatus {
+export fn AcpiOsReadMemory(_: usize, _: *u64, _: u32) AcpiStatus {
     @panic("AcpiOsReadMemory unimplemented");
 }
 
-export fn AcpiOsWriteMemory(address: usize, value: u64, width: u32) AcpiStatus {
+export fn AcpiOsWriteMemory(_: usize, _: u64, _: u32) AcpiStatus {
     @panic("AcpiOsWriteMemory unimplemented");
 }
 
-export fn AcpiOsReadPort(address: usize, value: *u32, width: u32) AcpiStatus {
+export fn AcpiOsReadPort(_: usize, _: *u32, _: u32) AcpiStatus {
     @panic("AcpiOsReadPort unimplemented");
 }
 
-export fn AcpiOsWritePort(address: usize, value: u32, width: u32) AcpiStatus {
+export fn AcpiOsWritePort(_: usize, _: u32, _: u32) AcpiStatus {
     @panic("AcpiOsWritePort unimplemented");
 }
 
@@ -336,7 +336,7 @@ export fn AcpiOsWritePciConfiguration() AcpiStatus {
     @panic("AcpiOsWritePciConfiguration unimplemented");
 }
 
-export fn AcpiOsRedirectOutput(destination: *c_void) AcpiStatus {
+export fn AcpiOsRedirectOutput(_: *anyopaque) AcpiStatus {
     @panic("AcpiOsRedirectOutput unimplemented");
 }
 
@@ -344,10 +344,10 @@ export fn AcpiOsGetTimer() u64 {
     @panic("AcpiOsGetTimer unimplemented");
 }
 
-export fn AcpiOsSignal(function: u32, info: *c_void) AcpiStatus {
+export fn AcpiOsSignal(_: u32, _: *anyopaque) AcpiStatus {
     @panic("AcpiOsSignal unimplemented");
 }
 
-export fn AcpiOsEnterSleep(sleep_state: u8, rega_value: u32, regb_value: u32) AcpiStatus {
+export fn AcpiOsEnterSleep(_: u8, _: u32, _: u32) AcpiStatus {
     @panic("AcpiOsEnterSleep unimplemented");
 }

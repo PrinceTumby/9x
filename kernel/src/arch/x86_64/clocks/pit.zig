@@ -8,17 +8,13 @@ const tls = @import("../tls.zig");
 var lock = SpinLock.init();
 var interrupt_received: bool = false;
 
-pub fn sleepHandlerApic(
-    _interrupt_frame: *const idt.InterruptFrame,
-) callconv(.Interrupt) void {
+pub fn sleepHandlerApic(_: idt.InterruptFrame) callconv(.Interrupt) void {
     const local_apic = tls.getThreadLocalVariable("local_apic");
     interrupt_received = true;
     local_apic.apic.signalEoi();
 }
 
-pub fn eventHandlerApic(
-    _interrupt_frame: *const idt.InterruptFrame,
-) callconv(.Interrupt) void {
+pub fn eventHandlerApic(_: idt.InterruptFrame) callconv(.Interrupt) void {
     const local_apic = tls.getThreadLocalVariable("local_apic");
     const interrupt_event_handler = tls.getThreadLocalVariable("interrupt_event_handler");
     interrupt_event_handler.func(interrupt_event_handler.arg);
@@ -28,7 +24,7 @@ pub fn eventHandlerApic(
 /// Calls `start_func`, waits an arbitrary amount of time, then calls `end_func`.
 /// The amount of time slept is then returned. Useful for calibrating other clocks.
 /// The PIT must not be mapped to an IRQ and should not currently be in use.
-pub fn calibrateOther(start_func: fn() void, end_func: fn() void) usize {
+pub fn calibrateOther(start_func: fn () void, end_func: fn () void) usize {
     // Prepare PIT
     asm volatile ("cli");
     interrupts.mapLegacyIrq(0, sleepHandlerApic) catch @panic("out of vectors");
@@ -46,7 +42,7 @@ pub fn prepareSleep() SpinLock.Held {
     // Set PIT one-shot mode on IRQ 0
     asm volatile ("outb %[command], $0x43"
         :
-        : [command] "{al}" (@as(u8, 0x30))
+        : [command] "{al}" (@as(u8, 0x30)),
     );
     // Setting PIT mode seems to trigger an interrupt, so this flushes it
     while (!interrupt_received) {
@@ -70,7 +66,7 @@ pub fn sleepMs(held: SpinLock.Held, time_in_ms: u8) void {
         \\outb %%al, $0x40
         :
         : [time_low] "r" (@truncate(u8, time_in_pit_ticks)),
-          [time_high] "r" (@truncate(u8, time_in_pit_ticks >> 8))
+          [time_high] "r" (@truncate(u8, time_in_pit_ticks >> 8)),
     );
     interrupt_received = false;
     // Wait for timer interrupt
@@ -99,11 +95,11 @@ pub fn sleepMsWithFn(
         \\outb %%al, $0x40
         :
         : [time_low] "r" (@truncate(u8, time_in_pit_ticks)),
-          [time_high] "r" (@truncate(u8, time_in_pit_ticks >> 8))
+          [time_high] "r" (@truncate(u8, time_in_pit_ticks >> 8)),
     );
     interrupt_received = false;
     // Run requested function before sleeping
-    func(arg);
+    func();
     // Wait for timer interrupt
     while (!interrupt_received) {
         asm volatile ("sti; hlt; cli");

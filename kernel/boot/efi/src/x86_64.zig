@@ -148,7 +148,7 @@ pub const PageMapper = struct {
         var address: [*]align(4096) u8 = undefined;
         const status = boot_services.allocatePages(.AllocateAnyPages, .LoaderData, 1, &address);
         if (status != .Success) {
-            logger.emerg("PML4, page allocator returned {}", .{status});
+            logger.err("PML4, page allocator returned {}", .{status});
             @panic("PageMapper.new() panicked at ");
         }
         // Zero out page table
@@ -211,7 +211,7 @@ pub const PageMapper = struct {
         var new_address: [*]align(4096) u8 = undefined;
         const status = allocatePages(.AllocateAnyPages, .LoaderData, num_pages, &new_address);
         if (status != .Success) {
-            logger.emerg("allocation of {} pages failed, returned {}", .{num_pages, status});
+            logger.err("allocation of {} pages failed, returned {}", .{num_pages, status});
             @panic("page allocation failed");
         }
         // Map pages into page table
@@ -267,7 +267,7 @@ pub const PageMapper = struct {
                             &new_address,
                         );
                         if (status != .Success) {
-                            logger.emerg("page mapping, page allocator returned {}", .{status});
+                            logger.err("page mapping, page allocator returned {}", .{status});
                             @panic("page mapping failed");
                         }
                         // Zero out page
@@ -396,7 +396,7 @@ pub const KernelArgs = extern struct {
         /// All values are undefined if color_info_format != .Bitmask
         color_bitmask: ColorBitmask = undefined,
 
-        pub const ColorFormat = extern enum(u32) {
+        pub const ColorFormat = enum(u32) {
             /// Red, Green, Blue, Reserved - 8 bits per color
             RGBR8,
             /// Red, Green, Blue, Reserved - 8 bits per color

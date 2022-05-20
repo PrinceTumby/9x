@@ -132,8 +132,8 @@ pub const responses = struct {
 
     pub const Smbios = extern struct {
         revision: u64 = 0,
-        entry_32: ?*const c_void,
-        entry_64: ?*const c_void,
+        entry_32: ?*const anyopaque,
+        entry_64: ?*const anyopaque,
     };
 
     pub const EfiSystemTable = extern struct {
@@ -166,7 +166,7 @@ pub const LimineFramebuffer = extern struct {
     blue_mask_shift: u8,
     unused: u8,
     edid_size: u64,
-    edid: ?*c_void,
+    edid: ?*anyopaque,
 };
 
 pub const MemoryMapEntry = extern struct {

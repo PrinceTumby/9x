@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Error = Allocator.Error;
 const builtin = @import("builtin");
 const root = @import("root");
+const compileErrorFmt = root.zig_extensions.compileErrorFmt;
 const smp = root.smp;
 const arch = root.arch;
 const page_allocator = arch.page_allocation.page_allocator_ptr;
@@ -21,7 +22,7 @@ const Block = packed struct {
     next: bool,
 
     pub const LenType = @Type(.{.Int = .{
-        .is_signed = false,
+        .signedness = .unsigned,
         .bits = @bitSizeOf(usize) - 2,
     }});
 
@@ -51,12 +52,10 @@ const Block = packed struct {
 
     comptime {
         if (@bitSizeOf(Block) != @bitSizeOf(usize)) {
-            @compileError("Heap block incorrect bit size for target:");
-            @compileLog(@bitSizeOf(Block));
+            compileErrorFmt("Heap block incorrect bit size for target: ", .{@bitSizeOf(Block)});
         }
         if (@sizeOf(Block) != @sizeOf(usize)) {
-            @compileError("Heap block incorrect byte size for target:");
-            @compileLog(@sizeOf(Block));
+            compileErrorFmt("Heap block incorrect byte size for target: ", .{@sizeOf(Block)});
         }
     }
 };
@@ -89,74 +88,79 @@ pub fn initHeap(heap: []u8) !void {
     list_head = new_block;
 }
 
-fn alloc(
-    self: *Allocator,
-    len: usize,
-    ptr_align: u29,
-    _len_align: u29,
-    ret_addr: usize,
-) ![]u8 {
-    std.debug.assert(ptr_align != 0);
-    const kernel_heap_allocator = @fieldParentPtr(KernelHeapAllocator, "allocator", self);
-    const held = kernel_heap_allocator.lock.acquire();
-    defer held.release();
-    // Scan through list to find free space large enough
-    var cur_block_maybe: ?*Block = list_head;
-    while (cur_block_maybe) |cur_block| : (cur_block_maybe = cur_block.getNext()) {
-        if (cur_block.used) continue;
-        const unaligned_start_addr = @ptrToInt(cur_block.getStartPtr());
-        const start_addr = std.mem.alignForward(unaligned_start_addr, ptr_align);
-        const max_addr = unaligned_start_addr +% cur_block.len -% 1;
-        const end_addr = start_addr +% len -% 1;
-        if (end_addr > max_addr) continue;
-        // We've found the block, reserve
-        cur_block.used = true;
-        // If enough space, split block into used block and free block, otherwise keep block as is
-        const new_block = @intToPtr(
-            *Block,
-            std.mem.alignForward(end_addr + 1, Block.alignment),
-        );
-        const new_space_start = @ptrCast([*]u8, new_block) + @sizeOf(Block);
-        if (@ptrToInt(new_space_start) < max_addr) {
-            cur_block.setLen(@ptrToInt(new_block) - unaligned_start_addr);
-            _ = try page_allocator.mapPage(@ptrToInt(new_block), page_flags);
-            new_block.* = Block.init(
-                max_addr - @ptrToInt(new_space_start) + 1,
-                false,
-                cur_block.next,
-            );
-            cur_block.next = true;
-        }
-        // Allocate pages
-        {
-            const end_page = std.mem.alignBackward(end_addr, 4096);
-            var current_page = std.mem.alignBackward(unaligned_start_addr, 4096);
-            while (current_page <= end_page) : (current_page += 4096) {
-                _ = try page_allocator.mapPage(current_page, page_flags);
-            }
-        }
-        return @intToPtr([*]u8, start_addr)[0 .. end_addr - start_addr + 1];
-    } else {
-        return error.OutOfMemory;
-    }
-}
+const KernelHeapAllocator = struct {
+    lock: smp.SpinLock = smp.SpinLock.init(),
 
-fn resize(
-    self: *Allocator,
-    buf: []u8,
-    buf_align: u29,
-    new_len: usize,
-    _len_align: u29,
-    ret_addr: usize,
-) Error!usize {
-    const kernel_heap_allocator = @fieldParentPtr(KernelHeapAllocator, "allocator", self);
-    const held = kernel_heap_allocator.lock.acquire();
-    defer held.release();
-    // In-place size increasing not supported
-    if (new_len > buf.len)
-        return error.OutOfMemory;
-    if (new_len == 0 and buf.len != 0) {
-        // Free memory
+    pub fn allocator(self: *KernelHeapAllocator) Allocator {
+        return Allocator.init(self, alloc, KernelHeapAllocator.noResize, free);
+    }
+
+    fn alloc(
+        self: *KernelHeapAllocator,
+        len: usize,
+        ptr_align: u29,
+        len_align: u29,
+        ret_addr: usize,
+    ) ![]u8 {
+        _ = len_align;
+        _ = ret_addr;
+        std.debug.assert(ptr_align != 0);
+        const held = self.lock.acquire();
+        defer held.release();
+        // Scan through list to find free space large enough
+        var cur_block_maybe: ?*Block = list_head;
+        while (cur_block_maybe) |cur_block| : (cur_block_maybe = cur_block.getNext()) {
+            if (cur_block.used) continue;
+            const unaligned_start_addr = @ptrToInt(cur_block.getStartPtr());
+            const start_addr = std.mem.alignForward(unaligned_start_addr, ptr_align);
+            const max_addr = unaligned_start_addr +% cur_block.len -% 1;
+            const end_addr = start_addr +% len -% 1;
+            if (end_addr > max_addr) continue;
+            // We've found the block, reserve
+            cur_block.used = true;
+            // If enough space, split block into used block and
+            // free block, otherwise keep block as is
+            const new_block = @intToPtr(
+                *Block,
+                std.mem.alignForward(end_addr + 1, Block.alignment),
+            );
+            const new_space_start = @ptrCast([*]u8, new_block) + @sizeOf(Block);
+            if (@ptrToInt(new_space_start) < max_addr) {
+                cur_block.setLen(@ptrToInt(new_block) - unaligned_start_addr);
+                _ = try page_allocator.mapPage(@ptrToInt(new_block), page_flags);
+                new_block.* = Block.init(
+                    max_addr - @ptrToInt(new_space_start) + 1,
+                    false,
+                    cur_block.next,
+                );
+                cur_block.next = true;
+            }
+            // Allocate pages
+            {
+                const end_page = std.mem.alignBackward(end_addr, 4096);
+                var current_page = std.mem.alignBackward(unaligned_start_addr, 4096);
+                while (current_page <= end_page) : (current_page += 4096) {
+                    _ = try page_allocator.mapPage(current_page, page_flags);
+                }
+            }
+            return @intToPtr([*]u8, start_addr)[0 .. end_addr - start_addr + 1];
+        } else {
+            return error.OutOfMemory;
+        }
+    }
+
+    usingnamespace Allocator.NoResize(KernelHeapAllocator);
+
+    fn free(
+        self: *KernelHeapAllocator,
+        buf: []u8,
+        buf_align: u29,
+        ret_addr: usize,
+    ) void {
+        _ = buf_align;
+        _ = ret_addr;
+        const held = self.lock.acquire();
+        defer held.release();
         const search_addr = @ptrToInt(buf.ptr);
         var prev_block_maybe: ?*Block = null;
         var cur_block_maybe: ?*Block = list_head;
@@ -220,26 +224,10 @@ fn resize(
                         }
                     }
                 }
-                return 0;
             }
         }
         @panic("attempt to free pointer not part of heap");
-    } else {
-        return new_len;
     }
-}
-
-const KernelHeapAllocator = struct {
-    allocator: Allocator,
-    lock: smp.SpinLock,
 };
 
-pub const heap_allocator_ptr = &heap_allocator.allocator;
-
-var heap_allocator = KernelHeapAllocator{
-    .allocator = Allocator{
-        .allocFn = alloc,
-        .resizeFn = resize,
-    },
-    .lock = smp.SpinLock.init(),
-};
+pub var kernel_heap_allocator = KernelHeapAllocator{};

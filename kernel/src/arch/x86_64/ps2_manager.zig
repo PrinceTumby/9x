@@ -123,9 +123,7 @@ const port_1 = struct {
         .byte_fifo = &byte_queue,
     };
 
-    pub fn byteReaderHandler(
-        _interrupt_frame: *const idt.InterruptFrame,
-    ) callconv(.Interrupt) void {
+    pub fn byteReaderHandler(_: *const idt.InterruptFrame) callconv(.Interrupt) void {
         const io_port = common.port;
         const next_byte = io_port.readByte(io_port.ps2_data);
         byte_queue.writeItem(next_byte) catch logger.warn("PS/2 FIFO byte discarded", .{});
@@ -146,9 +144,7 @@ const port_2 = struct {
         .byte_fifo = &byte_queue,
     };
 
-    pub fn byteReaderHandler(
-        _interrupt_frame: *const idt.InterruptFrame,
-    ) callconv(.Interrupt) void {
+    pub fn byteReaderHandler(_: *const idt.InterruptFrame) callconv(.Interrupt) void {
         const io_port = common.port;
         const next_byte = io_port.readByte(io_port.ps2_data);
         byte_queue.writeItem(next_byte) catch logger.warn("PS/2 FIFO byte discarded", .{});

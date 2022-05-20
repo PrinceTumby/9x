@@ -13,66 +13,64 @@ pub fn build(b: *Builder) void {
     // b.verbose = true;
     // b.verbose_link = true;
 
-    // ACPICA library
-    const patched_acpica_files = comptime blk: {
-        var patched_files = acpica_files;
-        for (patched_files) |*file_path| {
-            file_path.* = "../" ++ file_path.*;
-        }
-        break :blk patched_files;
-    };
-    const acpica_library = b.addSystemCommand(&[_][]const u8{
-        "wsl",
-        "ls",
-        "build-cache/built.txt",
-        "2>/dev/null",
-        "1>/dev/null",
-        "||",
-        "(",
-        "cd",
-        "build-cache",
-        "&&",
-        // "gcc",
-        "clang",
-        "-I../src/platform/acpi/acpica/include",
-        "-U_LINUX",
-        "-U__linux__",
-        "-D__9x__",
-        "-DB_9X_64_BIT",
-        "-DDEBUG=0",
-        "-fPIC",
-        "-disable-red-zone",
-        "-nostdlib",
-        "-ffunction-sections",
-        "-c",
-        "-w",
-        "-O2",
-    } ++ patched_acpica_files ++ [_][]const u8{
-        "&&",
-        "touch",
-        "built.txt",
-        ")",
-    });
-
     // // ACPICA library
-    // const acpica_library = b.addStaticLibrary("acpica", null);
-    // acpica_library.setBuildMode(build_mode);
-    // acpica_library.setTarget(CrossTarget{
-    //     .cpu_arch = Target.Cpu.Arch.x86_64,
-    //     .os_tag = Target.Os.Tag.freestanding,
-    //     .abi = Target.Abi.gnu,
+    // const patched_acpica_files = comptime blk: {
+    //     var patched_files = acpica_files;
+    //     for (patched_files) |*file_path| {
+    //         file_path.* = "../" ++ file_path.*;
+    //     }
+    //     break :blk patched_files;
+    // };
+    // const acpica_library = b.addSystemCommand(&[_][]const u8{
+    //     "wsl",
+    //     "ls",
+    //     "build-cache/built.txt",
+    //     "2>/dev/null",
+    //     "1>/dev/null",
+    //     "||",
+    //     "(",
+    //     "cd",
+    //     "build-cache",
+    //     "&&",
+    //     // "gcc",
+    //     "clang",
+    //     "-I../src/platform/acpi/acpica/include",
+    //     "-U_LINUX",
+    //     "-U__linux__",
+    //     "-D__9x__",
+    //     "-DB_9X_64_BIT",
+    //     "-DDEBUG=0",
+    //     "-fPIC",
+    //     "-disable-red-zone",
+    //     "-nostdlib",
+    //     "-ffunction-sections",
+    //     "-c",
+    //     "-w",
+    //     "-O2",
+    // } ++ patched_acpica_files ++ [_][]const u8{
+    //     "&&",
+    //     "touch",
+    //     "built.txt",
+    //     ")",
     // });
-    // acpica_library.force_pic = true;
-    // // acpica_library.code_model = .kernel;
-    // acpica_library.addIncludeDir("src/platform/acpi/acpica/include");
-    // acpica_library.defineCMacro("__9x__");
-    // acpica_library.defineCMacro("B_9X_64_BIT");
-    // acpica_library.defineCMacro("_DEBUG=0");
-    // for (acpica_files) |file_path| {
-    //     acpica_library.addCSourceFile(file_path, &[_][]const u8{});
-    // }
-    // acpica_library.setVerboseCC(true);
-    // acpica_library.setVerboseLink(true);
+
+    // ACPICA library
+    const acpica_library = b.addStaticLibrary("acpica", null);
+    acpica_library.setBuildMode(build_mode);
+    acpica_library.setTarget(CrossTarget{
+        .cpu_arch = Target.Cpu.Arch.x86_64,
+        .os_tag = Target.Os.Tag.freestanding,
+        .abi = Target.Abi.gnu,
+    });
+    acpica_library.force_pic = true;
+    acpica_library.red_zone = false;
+    acpica_library.addIncludeDir("src/platform/acpi/acpica/include");
+    acpica_library.defineCMacro("__9x__", null);
+    acpica_library.defineCMacro("B_9X_64_BIT", null);
+    acpica_library.defineCMacro("_DEBUG", "0");
+    for (acpica_files) |file_path| {
+        acpica_library.addCSourceFile(file_path, &[_][]const u8{});
+    }
 
     // // ACPICA Library
     // const acpica_library = b.addSystemCommand(&[_][]const u8{
@@ -113,24 +111,24 @@ pub fn build(b: *Builder) void {
         .os_tag = Target.Os.Tag.freestanding,
         .abi = Target.Abi.gnu,
     });
-    kernel.setLinkerScriptPath("src/arch/x86_64/build/link.ld");
+    kernel.setLinkerScriptPath(.{ .path = "src/arch/x86_64/build/link.ld" });
     kernel.setOutputDir("out");
     kernel.force_pic = true;
     kernel.code_model = .kernel;
     kernel.single_threaded = true;
-    // kernel.red_zone = false;
+    kernel.red_zone = false;
     kernel.disable_stack_probing = true;
-    // kernel.linkLibrary(acpica_library);
+    kernel.linkLibrary(acpica_library);
     // kernel.setVerboseCC(true);
     // kernel.setVerboseLink(true);
     kernel.addCSourceFile("src/platform/acpi/acpica/zig/os_layer_extra.c", &[_][]const u8{});
-    kernel.step.dependOn(&acpica_library.step);
+    // kernel.step.dependOn(&acpica_library.step);
     // kernel.addLibPath("build-cache");
     // kernel.linkSystemLibraryName("acpica");
-    for (acpica_files) |file_path| {
-        const fixed_path = b.fmt("build-cache/{}.o", .{file_path[32 .. file_path.len - 2]});
-        kernel.addObjectFile(fixed_path);
-    }
+    // for (acpica_files) |file_path| {
+    //     const fixed_path = b.fmt("build-cache/{s}.o", .{file_path[32 .. file_path.len - 2]});
+    //     kernel.addObjectFile(fixed_path);
+    // }
 
     const kernel_stripped = b.addSystemCommand(&[_][]const u8{
         "wsl",

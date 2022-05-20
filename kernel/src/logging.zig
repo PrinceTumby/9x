@@ -21,6 +21,7 @@ pub fn SerialWriter(comptime port: type) type {
         pub const Error = error {};
 
         pub fn writeAll(self: Self, bytes: []const u8) Error!void {
+            _ = self;
             for (bytes) |byte| {
                 if (byte == '\n') port.writeByte('\r');
                 port.writeByte(byte);
@@ -28,6 +29,7 @@ pub fn SerialWriter(comptime port: type) type {
         }
 
         pub fn writeByte(self: Self, byte: u8) Error!void {
+            _ = self;
             if (byte == '\n') port.writeByte('\r');
             port.writeByte(byte);
         }
@@ -61,6 +63,7 @@ pub const BochsWriter = struct {
     }
 
     pub inline fn writeByte(self: BochsWriter, byte: u8) Error!void {
+        _ = self;
         if (byte == '\n') writeByteOut('\r');
         writeByteOut(byte);
     }
@@ -114,10 +117,12 @@ pub const LogWriter = struct {
     pub const Error = error {};
 
     pub fn writeAll(self: LogWriter, bytes: []const u8) Error!void {
+        _ = self;
         logRaw("{s}", .{bytes});
     }
 
     pub fn writeByte(self: LogWriter, byte: u8) Error!void {
+        _ = self;
         logRaw("{c}", .{byte});
     }
     
@@ -134,10 +139,10 @@ pub const LogWriter = struct {
 };
 
 pub const AbstractWriter = struct {
-    writer_pointer: *c_void,
-    writeAllFunc: fn(self: *c_void, bytes: []const u8) Error!void,
-    writeByteFunc: fn(self: *c_void, byte: u8) Error!void,
-    writeByteNTimesFunc: fn(self: *c_void, byte: u8, n: usize) Error!void,
+    writer_pointer: *anyopaque,
+    writeAllFunc: fn(self: *anyopaque, bytes: []const u8) Error!void,
+    writeByteFunc: fn(self: *anyopaque, byte: u8) Error!void,
+    writeByteNTimesFunc: fn(self: *anyopaque, byte: u8, n: usize) Error!void,
 
     pub const Error = error {};
 

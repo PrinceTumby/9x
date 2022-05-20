@@ -5,7 +5,7 @@ pub const BootInformation = extern struct {
 };
 
 pub const tag = struct {
-    pub const Type = extern enum(u32) {
+    pub const Type = enum(u32) {
         End = 0,
         CommandLine = 1,
         BootLoaderName = 2,

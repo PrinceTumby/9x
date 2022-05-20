@@ -4,7 +4,7 @@ const std = @import("std");
 const root = @import("root");
 const msr = @import("common.zig").msr;
 const multicore_support = root.build_options.multicore_support;
-const heap_allocator = root.heap.heap_allocator_ptr;
+const heap_allocator = root.heap.kernel_heap_allocator.allocator();
 
 pub const ThreadLocalVariables = struct {
     self_pointer: *ThreadLocalVariables,
@@ -42,9 +42,9 @@ pub usingnamespace if (multicore_support) struct {
 
     // TODO Change to just return a pointer to the ThreadLocalVariables struct
     pub inline fn getThreadLocalVariable(comptime name: []const u8) *getReturnType(name) {
-        comptime const asm_string = blk: {
+        const asm_string = comptime blk: {
             var buffer: [64]u8 = undefined;
-            const offset = @byteOffsetOf(ThreadLocalVariables, "self_pointer");
+            const offset = @offsetOf(ThreadLocalVariables, "self_pointer");
             break :blk std.fmt.bufPrint(&buffer, "movq %%gs:{}, %[out]", .{offset})
                 catch |err| @compileError("asm string formatting error: " ++ @errorName(err));
         };

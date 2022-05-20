@@ -8,13 +8,17 @@ pub const serial = @import("riscv64/serial.zig");
 // Initialisation steps
 
 const std = @import("std");
+const KernelArgs = common.KernelArgs;
+
 const logger = std.log.scoped(.riscv64);
 
-pub fn stage1Init(_args: *KernelArgs) void {
+pub fn stage1Init(args: *KernelArgs) void {
+    _ = args;
     @panic("Stage 1 init unimplemented");
 }
 
-pub fn stage2Init(_args: *KernelArgs) void {
+pub fn stage2Init(args: *KernelArgs) void {
+    _ = args;
     @panic("Stage 2 init unimplemented");
 }
 

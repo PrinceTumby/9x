@@ -44,7 +44,8 @@ comptime {
 
 // Initialisation steps
 
-pub fn stage1Init(_args: *KernelArgs) void {
+pub fn stage1Init(args: *KernelArgs) void {
+    _ = args;
     tss.loadTssIntoGdt();
     interrupts.initIDT();
 }

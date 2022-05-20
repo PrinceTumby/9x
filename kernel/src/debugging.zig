@@ -112,14 +112,14 @@ pub noinline fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace
         // Disable screen
         1 => root.logging.removeLogDevice(),
         2 => {
-            logging.logString(.emerg, .main, "KERNEL PANIC: ", message);
+            logging.logString(.err, .main, "KERNEL PANIC: ", message);
             while (true) waitForInterrupt();
         },
         else => while (true) waitForInterrupt(),
     }
     panic_depth += 1;
     // logger.emerg("KERNEL PANIC: {s}", .{message});
-    logging.logString(.emerg, .main, "KERNEL PANIC: ", message);
+    logging.logString(.err, .main, "KERNEL PANIC: ", message);
     // Print stack trace
     if (!disable_trace_logging) {
         logging.logRawLn("STACK TRACE:", .{});

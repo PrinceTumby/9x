@@ -6,7 +6,7 @@ pub const AcpiStatus = packed struct {
     code: Code,
     reserved: u16 = 0,
 
-    pub const Code = packed enum(u4) {
+    pub const Code = enum(u4) {
         Environment = 0,
         Programmer = 1,
         AcpiTables = 2,
@@ -145,7 +145,7 @@ pub const AcpiStatus = packed struct {
     }
 };
 
-pub const AcpiBoolean = extern enum(u8) {
+pub const AcpiBoolean = enum(u8) {
     False = 0,
     True = 1,
     _,
@@ -162,7 +162,7 @@ pub const AcpiNameUnion = extern union {
 
 pub const AcpiTableDesc = extern struct {
     address: u64,
-    pointer: *c_void,
+    pointer: *anyopaque,
     length: u32,
     signature: u32,
     owner_id: u16,

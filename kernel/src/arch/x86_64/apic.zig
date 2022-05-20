@@ -132,7 +132,7 @@ pub const LocalApic = struct {
         timer_mode: TimerMode,
         reserved_3: u13 = 0,
 
-        pub const TimerMode = packed enum(u2) {
+        pub const TimerMode = enum(u2) {
             OneShot = 0,
             Periodic = 1,
             TscDeadline = 2,
@@ -261,7 +261,7 @@ pub const IoApic = struct {
         reserved: u39 = 0,
         destination_field: u8,
 
-        pub const DeliveryMode = packed enum(u3) {
+        pub const DeliveryMode = enum(u3) {
             Normal = 0,
             LowPriority = 1,
             SystemManagementInterrupt = 2,
@@ -271,22 +271,22 @@ pub const IoApic = struct {
             _,
         };
 
-        pub const DestinationMode = packed enum(u1) {
+        pub const DestinationMode = enum(u1) {
             Physical = 0,
             Logical = 1,
         };
 
-        pub const Polarity = packed enum(u1) {
+        pub const Polarity = enum(u1) {
             High = 0,
             Low = 1,
         };
 
-        pub const LevelTriggeredInterruptStatus = packed enum(u1) {
+        pub const LevelTriggeredInterruptStatus = enum(u1) {
             EoiSent = 0,
             InterruptReceived = 1,
         };
 
-        pub const TriggerMode = packed enum(u1) {
+        pub const TriggerMode = enum(u1) {
             EdgeSensitive = 0,
             LevelSensitive = 1,
         };

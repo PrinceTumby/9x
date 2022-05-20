@@ -58,8 +58,8 @@ pub const Task = struct {
 };
 
 pub const KernelTask = struct {
-    function: fn (args_ptr: *c_void) void,
-    args_ptr: *c_void,
+    function: fn (args_ptr: *anyopaque) void,
+    args_ptr: *anyopaque,
 
     pub fn init(function: anytype, args_ptr: anytype) KernelTask {
         const func_info = @typeInfo(@TypeOf(function)).Fn;
@@ -84,7 +84,7 @@ pub const KernelTask = struct {
             );
         }
         return KernelTask{
-            .function = @ptrCast(fn (args_ptr: *c_void) void, function),
+            .function = @ptrCast(fn (args_ptr: *anyopaque) void, function),
             .args_ptr = args_ptr,
         };
     }

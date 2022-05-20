@@ -14,13 +14,21 @@ pub const InterruptFrame = extern struct {
     stack_segment: usize,
 };
 
+pub const InterruptFrameErrCode = extern struct {
+    error_code: usize,
+    instruction_ptr: usize,
+    code_segment: usize,
+    cpu_flags: usize,
+    stack_ptr: usize,
+    stack_segment: usize,
+};
+
 /// Handler function for an interrupt or exception without error code
-pub const HandlerFunc = fn (interrupt_frame: *const InterruptFrame) callconv(.Interrupt) void;
+pub const HandlerFunc = fn (interrupt_frame: InterruptFrame) callconv(.Interrupt) void;
 
 /// Handler function for an interrupt or exception with error code
 pub const HandlerFuncWithErrCode = fn (
-    interrupt_frame: *const InterruptFrame,
-    error_code: u32,
+    interrupt_frame: InterruptFrameErrCode,
 ) callconv(.Interrupt) void;
 
 /// Handler function for an interrupt or exception with page fault error code
@@ -28,13 +36,12 @@ pub const PageFaultHandlerFunc = HandlerFuncWithErrCode;
 
 /// Handler function without error code that must not return
 pub const DivergingHandlerFunc = fn (
-    interrupt_frame: *const InterruptFrame,
+    interrupt_frame: InterruptFrame,
 ) callconv(.Interrupt) noreturn;
 
 /// Handler function with error code that must not return
 pub const DivergingHandlerFuncWithErrCode = fn (
-    interrupt_frame: *const InterruptFrame,
-    error_code: u32,
+    interrupt_frame: InterruptFrameErrCode,
 ) callconv(.Interrupt) noreturn;
 
 pub const PageFaultErrorCode = packed struct {
@@ -174,11 +181,11 @@ pub const InterruptDescriptorTable = extern struct {
     apic_interrupts: [256 - 128]Entry(HandlerFunc),
 
     pub fn new() InterruptDescriptorTable {
-        comptime const MissingHandler = Entry(HandlerFunc).missing();
-        comptime const MissingErrCodeHandler = Entry(HandlerFuncWithErrCode).missing();
-        comptime const MissingDivergingErrCodeHandler =
-            Entry(DivergingHandlerFuncWithErrCode).missing();
-        comptime const MissingDivergingHandler = Entry(DivergingHandlerFunc).missing();
+        const MissingHandler = comptime Entry(HandlerFunc).missing();
+        const MissingErrCodeHandler = comptime Entry(HandlerFuncWithErrCode).missing();
+        const MissingDivergingErrCodeHandler =
+            comptime Entry(DivergingHandlerFuncWithErrCode).missing();
+        const MissingDivergingHandler = comptime Entry(DivergingHandlerFunc).missing();
         return InterruptDescriptorTable{
             .divide_by_zero = MissingHandler,
             .debug = MissingHandler,

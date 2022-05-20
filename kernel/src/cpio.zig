@@ -3,7 +3,7 @@
 const std = @import("std");
 
 pub const CpioNode = extern struct {
-    magic: [6]u8 = magic_marker,
+    magic: [6]u8 = magic_const,
     device: [6]u8,
     i_number: [6]u8,
     mode: [6]u8,

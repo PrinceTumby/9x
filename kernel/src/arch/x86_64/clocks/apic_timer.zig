@@ -4,17 +4,13 @@ const interrupts = @import("../interrupts.zig");
 const LocalApic = @import("../apic.zig").LocalApic;
 const idt = @import("../idt.zig");
 
-pub fn sleepHandler(
-    _interrupt_frame: *const idt.InterruptFrame,
-) callconv(.Interrupt) void {
+pub fn sleepHandler(_: idt.InterruptFrame) callconv(.Interrupt) void {
     const local_apic_tls = tls.getThreadLocalVariable("local_apic");
     local_apic_tls.interrupt_received = true;
     local_apic_tls.apic.signalEoi();
 }
 
-pub fn eventHandler(
-    _interrupt_frame: *const idt.InterruptFrame,
-) callconv(.Interrupt) void {
+pub fn eventHandler(_: idt.InterruptFrame) callconv(.Interrupt) void {
     const local_apic_tls = tls.getThreadLocalVariable("local_apic");
     const event_interrupt_handler = tls.getThreadLocalVariable("event_interrupt_handler");
     event_interrupt_handler.func(event_interrupt_handler.arg);
@@ -23,9 +19,7 @@ pub fn eventHandler(
 
 pub var repeat_ticks: u32 = 0;
 
-pub fn repeatHandler(
-    _interrupt_frame: *const idt.InterruptFrame,
-) callconv(.Interrupt) void {
+pub fn repeatHandler(_: idt.InterruptFrame) callconv(.Interrupt) void {
     const local_apic_tls = tls.getThreadLocalVariable("local_apic");
     const local_apic = local_apic_tls.apic;
     const root = @import("root");

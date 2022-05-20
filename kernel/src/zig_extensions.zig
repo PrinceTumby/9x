@@ -34,6 +34,7 @@ pub fn BoundedArray(comptime T: type, comptime capacity: comptime_int) type {
         }
 
         pub inline fn capacity(self: Self) usize {
+            _ = self;
             return capacity;
         }
 
@@ -48,7 +49,7 @@ pub fn BoundedArray(comptime T: type, comptime capacity: comptime_int) type {
         pub fn orderedRemove(self: *Self, i: usize) T {
             const item = self.buffer[i];
             if (i + 1 < self.len) {
-                for (self.buffer[i + 1 .. len]) |*move_item, move_i| {
+                for (self.buffer[i + 1 .. self.len]) |*move_item, move_i| {
                     self.buffer[move_i] = move_item.*;
                 }
             }

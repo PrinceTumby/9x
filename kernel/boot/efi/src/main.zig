@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const uefi = std.os.uefi;
 const fmt = std.fmt;
+const fmtIntSizeDec = std.fmt.fmtIntSizeDec;
 const utf8ToUtf16 = std.unicode.utf8ToUtf16LeStringLiteral;
 pub const arch = @import("x86_64.zig");
 pub const KernelArgs = arch.KernelArgs;
@@ -10,9 +11,6 @@ const elf = @import("elf.zig");
 const logging = @import("logging.zig");
 pub const Framebuffer = @import("core_graphics.zig").FrameBuffer;
 pub const text_lib = @import("text_lib.zig");
-
-// DEBUG
-pub const interrupt_debug = @import("interrupt_debug.zig");
 
 pub const log = logging.log;
 pub const log_level: std.log.Level = .debug;
@@ -24,8 +22,7 @@ var text_display: text_lib.TextDisplay(Framebuffer) = undefined;
 // Embedded kernel ELF file
 const kernel: []const u8 = @embedFile("../../../out/kernel");
 
-var allocator_internal = @import("allocation.zig").getAllocator();
-pub const allocator = &allocator_internal;
+pub const allocator = @import("allocation.zig").efi_allocator.allocator();
 const logger = std.log.scoped(.main);
 const config_path: []const u8 = "etc/kernel/config";
 const flags_global: usize = arch.PageTableEntry.generateU64(.{
@@ -40,7 +37,7 @@ fn allocateMem(size: u64) []allowzero u8 {
     var new_address: [*]align(4096) u8 = undefined;
     const status = allocatePages(.AllocateAnyPages, .LoaderData, num_pages, &new_address);
     if (status != .Success) {
-        logger.emerg("allocation of {} pages failed, returned {}", .{num_pages, status});
+        logger.err("allocation of {} pages failed, returned {}", .{num_pages, status});
         @panic("page allocation failed");
     }
     const new_size = num_pages << 12;
@@ -60,7 +57,7 @@ fn loadInitrd(image_handle: uefi.Handle) InitrdError![]align(8) u8 {
     var loaded_image: *uefi.protocols.LoadedImageProtocol = undefined;
     if (boot_services.handleProtocol(
             image_handle, &uefi.protocols.LoadedImageProtocol.guid,
-            @ptrCast(*?*c_void, &loaded_image),
+            @ptrCast(*?*anyopaque, &loaded_image),
         ) != .Success
     ) {
         return error.DriveMountError;
@@ -70,7 +67,7 @@ fn loadInitrd(image_handle: uefi.Handle) InitrdError![]align(8) u8 {
     if (boot_services.handleProtocol(
             loaded_image.device_handle.?,
             &uefi.protocols.SimpleFileSystemProtocol.guid,
-            @ptrCast(*?*c_void, &drive_protocol)) != .Success
+            @ptrCast(*?*anyopaque, &drive_protocol)) != .Success
     ) {
         return error.DriveMountError;
     }
@@ -96,8 +93,8 @@ fn loadInitrd(image_handle: uefi.Handle) InitrdError![]align(8) u8 {
     // Hardcoding the buffer size should be fine here, as the file name length is known
     var info_buffer: [128]u8 align(8) = undefined;
     var info_size: usize = info_buffer.len;
-    var file_info_guid align(8) = uefi.protocols.FileProtocol.guid;
-    if (initrd_file.get_info(&file_info_guid, &info_size, &info_buffer) != .Success) {
+    var file_info_guid align(8) = uefi.protocols.FileInfo.guid;
+    if (initrd_file.getInfo(&file_info_guid, &info_size, &info_buffer) != .Success) {
         return error.FileReadError;
     }
     const info = @ptrCast(*const uefi.protocols.FileInfo, &info_buffer);
@@ -132,7 +129,7 @@ pub fn main() void {
         error.FileReadError => @panic("reading initrd failed"),
         error.AllocationError => @panic("allocation failed"),
     };
-    logger.info("loaded initrd at {*}, {B}", .{initrd.ptr, initrd.len});
+    logger.info("loaded initrd at {*}, {}", .{initrd.ptr, fmtIntSizeDec(initrd.len)});
 
     // Get graphics framebuffer, if available
     var fb_ptr: ?[*]volatile u8 = null;
@@ -147,7 +144,7 @@ pub fn main() void {
         if (.Success == boot_services.locateProtocol(
                 &uefi.protocols.GraphicsOutputProtocol.guid,
                 null,
-                @ptrCast(*?*c_void, &graphics),
+                @ptrCast(*?*anyopaque, &graphics),
         )) {
             if (graphics.setMode(graphics.mode.mode) != .Success) {
                 break :blk;
@@ -263,7 +260,7 @@ pub fn main() void {
         }
         break :blk return_size;
     };
-    logger.info("total physical memory area: {B}", .{total_mappable_size});
+    logger.info("total physical memory area: {}", .{fmtIntSizeDec(total_mappable_size)});
 
     // Allocate environment, add arguments from initrd
     var environment_map = std.BufMap.init(allocator);
@@ -355,7 +352,7 @@ pub fn main() void {
                 .AfterEquals => switch (char) {
                     '\n' => {
                         const after_equals_slice = config_file[selection_start .. pos];
-                        environment_map.set(before_equals_slice, after_equals_slice) catch {
+                        environment_map.put(before_equals_slice, after_equals_slice) catch {
                             @panic("environment map setting failed");
                         };
                         pos += 1;
@@ -368,7 +365,7 @@ pub fn main() void {
         switch (current_state) {
             .AfterEquals => {
                 const after_equals_slice = config_file[selection_start .. pos];
-                environment_map.set(before_equals_slice, after_equals_slice) catch {
+                environment_map.put(before_equals_slice, after_equals_slice) catch {
                     @panic("environment map setting failed");
                 };
             },
@@ -384,7 +381,7 @@ pub fn main() void {
         var loaded_image: *uefi.protocols.LoadedImageProtocol = undefined;
         if (boot_services.handleProtocol(
                 image_handle, &uefi.protocols.LoadedImageProtocol.guid,
-                @ptrCast(*?*c_void, &loaded_image),
+                @ptrCast(*?*anyopaque, &loaded_image),
         ) != .Success
         ) {
             break :uefi_command_line;
@@ -424,7 +421,7 @@ pub fn main() void {
                 .AfterEquals => switch (char) {
                     ' ' => {
                         const after_equals_slice = load_options[selection_start .. pos];
-                        environment_map.set(before_equals_slice, after_equals_slice) catch {
+                        environment_map.put(before_equals_slice, after_equals_slice) catch {
                             @panic("environment map setting failed");
                         };
                         current_state = .NewArg;
@@ -436,7 +433,7 @@ pub fn main() void {
         switch (current_state) {
             .AfterEquals => {
                 const after_equals_slice = load_options[selection_start..];
-                environment_map.set(before_equals_slice, after_equals_slice) catch {
+                environment_map.put(before_equals_slice, after_equals_slice) catch {
                     @panic("environment map setting failed");
                 };
             },
@@ -452,7 +449,7 @@ pub fn main() void {
             var current_size: usize = 0;
             while (iterator.next()) |entry| {
                 // Add on key and value lengths, along with overhead for '=' and '\n'
-                current_size += entry.key.len + entry.value.len + 2;
+                current_size += entry.key_ptr.len + entry.value_ptr.len + 2;
             }
             break :len_blk current_size;
         };
@@ -465,12 +462,12 @@ pub fn main() void {
         var iterator = environment_map.iterator();
         var pos: usize = 0;
         while (iterator.next()) |entry| {
-            @memcpy(buffer + pos, entry.key.ptr, entry.key.len);
-            pos += entry.key.len;
+            @memcpy(buffer + pos, entry.key_ptr.ptr, entry.key_ptr.len);
+            pos += entry.key_ptr.len;
             buffer[pos] = '=';
             pos += 1;
-            @memcpy(buffer + pos, entry.value.ptr, entry.value.len);
-            pos += entry.value.len;
+            @memcpy(buffer + pos, entry.value_ptr.ptr, entry.value_ptr.len);
+            pos += entry.value_ptr.len;
             buffer[pos] = '\n';
             pos += 1;
         }
@@ -486,7 +483,7 @@ pub fn main() void {
     const program_header = elf_header.getProgramHeader(kernel);
     // Copy each section into memory
     var entry_addr: usize = undefined;
-    for (program_header) |*entry, entry_i| {
+    for (program_header) |*entry| {
         if (entry.type != .Loadable) continue;
         const mem_slice = allocateMem(entry.segment_memory_size);
         const segment_slice = @ptrCast(
@@ -734,8 +731,8 @@ pub fn main() void {
     arch.jumpTo(entry_addr, kernel_args_ptr);
 }
 
-pub fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace) noreturn {
-    logger.emerg("LOADER PANIC: {s}", .{message});
+pub fn panic(message: []const u8, _: ?*std.builtin.StackTrace) noreturn {
+    logger.err("LOADER PANIC: {s}", .{message});
     while (true) {
         asm volatile ("hlt");
     }

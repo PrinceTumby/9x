@@ -6,30 +6,10 @@ const builtin = @import("builtin");
 
 const BuildFunc = fn(b: *Builder) void;
 
-const supported_archs = [_][]const u8{
-    "x86_64",
-    "riscv64",
-};
-
 const cpu_arch_map = std.ComptimeStringMap(Target.Cpu.Arch, .{
     .{ "x86_64", .x86_64 },
     .{ "riscv64", .riscv64 },
 });
-
-fn missingBuildFunc(_b: *Builder) void {
-    @panic("Unsupported CPU architecture");
-}
-
-/// Imports each architecture specific build script from "src/arch/{ARCH}/build/build.zig"
-const build_functions: [256]BuildFunc = comptime blk: {
-    var funcs: [256]BuildFunc = [1]BuildFunc{missingBuildFunc} ** 256;
-    for (supported_archs) |arch_string| {
-        const arch = cpu_arch_map.get(arch_string)
-            orelse @compileError("Architecture " ++ arch_string ++ "does not exist in build map");
-        funcs[@enumToInt(arch)] = @import("src/arch/" ++ arch_string ++ "/build/build.zig").build;
-    }
-    break :blk funcs;
-};
 
 pub fn build(b: *Builder) void {
     const cpu_arch: Target.Cpu.Arch = if (b.option(
@@ -42,5 +22,9 @@ pub fn build(b: *Builder) void {
         builtin.cpu.arch;
 
     // Run architecture specific build function
-    build_functions[@enumToInt(cpu_arch)](b);
+    switch (cpu_arch) {
+        .x86_64 => @import("src/arch/x86_64/build/build.zig").build(b),
+        .riscv64 => @import("src/arch/riscv64/build/build.zig").build(b),
+        else => @panic("Unsupported target architecture"),
+    }
 }

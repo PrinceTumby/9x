@@ -57,7 +57,7 @@ pub const Font = struct {
 pub fn TextDisplay(comptime FrameBuffer: type) type {
     return struct {
         lock: smp.SpinLock = smp.SpinLock.init(),
-        allocator: *std.mem.Allocator,
+        allocator: std.mem.Allocator,
         font: Font,
         framebuffer: *FrameBuffer,
         text_buffer: []ScreenChar,
@@ -121,7 +121,7 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
 
         const Self = @This();
 
-        pub fn init(fb: *FrameBuffer, font: Font, allocator: *std.mem.Allocator) !Self {
+        pub fn init(fb: *FrameBuffer, font: Font, allocator: std.mem.Allocator) !Self {
             const width = @truncate(u16, fb.width / font.width);
             const height = @truncate(u16, fb.height / font.height);
             const text_buffer_len = @as(usize, width) * @as(usize, height);
