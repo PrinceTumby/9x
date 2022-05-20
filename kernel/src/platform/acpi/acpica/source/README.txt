@@ -1,0 +1,1 @@
+Just contains all C files from dispatcher/, events/, executer/, hardware/, namespace/, parser/, resources/, tables/, and utilities/

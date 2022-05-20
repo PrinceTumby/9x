@@ -1,0 +1,12 @@
+- Finish multiboot implementation
+- Implement KASLR
+- Redesign heap to be linked list of page pools, don't remap into kernel area
+- Allocate space for framebuffer in upper memory, map near start of kernel
+- Write menu configuration tool
+- Add more configuration options to disable certain features
+- Change 'config' to 'build_options'
+- Implement kernel argument parsing
+- Implement platform feature detection
+- Change 'out' folders to 'zig-out'
+- Write documentation comments using "//#" as start, set Vim to automatically fold documentation
+- Write tool to convert between Markdown/Vimwiki and Zig with documentation comments

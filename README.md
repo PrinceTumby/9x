@@ -1,2 +1,4 @@
 # 9x
-Plan 9 inspired operating system
+Operating system heavily inspired by ideas from Plan 9.
+
+Currently uses Zig 0.7.1.
