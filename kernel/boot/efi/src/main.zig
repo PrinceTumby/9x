@@ -11,9 +11,6 @@ const logging = @import("logging.zig");
 pub const Framebuffer = @import("core_graphics.zig").FrameBuffer;
 pub const text_lib = @import("text_lib.zig");
 
-// DEBUG
-pub const interrupt_debug = @import("interrupt_debug.zig");
-
 pub const log = logging.log;
 pub const log_level: std.log.Level = .debug;
 // Screen logging

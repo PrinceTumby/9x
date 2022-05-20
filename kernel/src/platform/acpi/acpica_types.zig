@@ -145,7 +145,7 @@ pub const AcpiStatus = packed struct {
     }
 };
 
-pub const AcpiBoolean = extern enum(u8) {
+pub const AcpiBoolean = enum(u8) {
     False = 0,
     True = 1,
     _,

@@ -122,6 +122,7 @@ pub const VirtualPageMapper = struct {
 
     /// Unmaps and frees `(size / 4096) + 1` pages starting at the given linear address.
     pub fn unmapMem(self: *VirtualPageMapper, start_address: u64, size: usize) void {
+        const actual_start_address = start_address & 0x000FFFFFFFFFF000;
         const level_masks = [_]u64{
             0xFF80_0000_0000,
             0x007F_C000_0000,
@@ -131,7 +132,7 @@ pub const VirtualPageMapper = struct {
         const num_pages = if (size & 0xFFF != 0) (size >> 12) + 1 else size >> 12;
         var page_i: usize = 0;
         outer: while (page_i < num_pages) : (page_i += 1) {
-            const virtual_address = actual_start_address + (page << 12);
+            const virtual_address = actual_start_address + (page_i << 12);
             var current_address = self.page_table.getAddress();
             for (level_masks) |level_mask, i| {
                 const current_table = @intToPtr(*align(4096) PageTable, current_address);

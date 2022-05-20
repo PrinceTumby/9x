@@ -57,10 +57,14 @@ pub fn OverridenNamespace(comptime namespace: type, comptime overriding_namespac
         };
         // Check overriding declaration type
         if (@typeInfo(overriding_decl.data.Var) != .Optional)
-            @compileError("Override type of `" ++ decl.name ++ "` must be optional of original");
+            @compileError(
+                "Override type of `" ++ overriding_decl.name ++ "` must be optional of original"
+            );
         // if (@typeInfo(overriding_decl.data.Var).Optional.child != decl.data.Var)
         if (@typeInfo(overriding_decl.data.Var).Optional.child != field.field_type)
-            @compileError("Override type of `" ++ decl.name ++ "` must be optional of original");
+            @compileError(
+                "Override type of `" ++ overriding_decl.name ++ "` must be optional of original"
+            );
         // const override = @field(overriding_namespace, decl.name);
         const override = @field(overriding_namespace, field.name);
         new_fields[i] = if (override != null) builtin.TypeId.StructField{
@@ -109,7 +113,7 @@ pub inline fn isComptime(
             @compileError("`namespace_ptr` must point to a valid namespace");
         comptime var found_field = false;
         for (info.fields) |namespace_field| {
-            if (comptime std.mem.eql(u8, namespace_field.name, @tagName(field))) {
+            if (std.mem.eql(u8, namespace_field.name, @tagName(field))) {
                 found_field = true;
                 return namespace_field.is_comptime;
             }

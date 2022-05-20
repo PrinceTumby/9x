@@ -97,7 +97,7 @@ pub const Elf = union(enum) {
             segment_memory_size: u64,
             alignment: u64,
 
-            pub const Type = packed enum(u32) {
+            pub const Type = enum(u32) {
                 Null = 0x0,
                 Loadable = 0x1,
                 DynamicLinkingInfo = 0x2,
@@ -132,7 +132,7 @@ pub const Elf = union(enum) {
                 address_align: u64,
                 entry_size: u64,
 
-                pub const Type = packed enum(u32) {
+                pub const Type = enum(u32) {
                     Null = 0,
                     ProgramBits = 1,
                     SymbolTable = 2,
@@ -151,7 +151,7 @@ pub const Elf = union(enum) {
                 pub const flag_values = struct {
                     pub const writable: u64 = 0b1;
                     pub const allocated: u64 = 0b10;
-                    pub const executable_instructions: 0b100;
+                    pub const executable_instructions: u64 = 0b100;
                 };
             };
         };

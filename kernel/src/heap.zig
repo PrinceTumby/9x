@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Error = Allocator.Error;
 const builtin = @import("builtin");
 const root = @import("root");
+const compileErrorFmt = root.zig_extensions.compileErrorFmt;
 const smp = root.smp;
 const arch = root.arch;
 const page_allocator = arch.page_allocation.page_allocator_ptr;
@@ -51,12 +52,10 @@ const Block = packed struct {
 
     comptime {
         if (@bitSizeOf(Block) != @bitSizeOf(usize)) {
-            @compileError("Heap block incorrect bit size for target:");
-            @compileLog(@bitSizeOf(Block));
+            compileErrorFmt("Heap block incorrect bit size for target: ", .{@bitSizeOf(Block)});
         }
         if (@sizeOf(Block) != @sizeOf(usize)) {
-            @compileError("Heap block incorrect byte size for target:");
-            @compileLog(@sizeOf(Block));
+            compileErrorFmt("Heap block incorrect byte size for target: ", .{@sizeOf(Block)});
         }
     }
 };

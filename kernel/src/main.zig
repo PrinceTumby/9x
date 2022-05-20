@@ -115,7 +115,7 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     };
     // TODO Add in validation of addresses and lengths
     // Load program segments into memory, mapping and setting flags
-    for (program_elf.program_header) |*entry, entry_i| {
+    for (program_elf.program_header) |*entry| {
         if (entry.type != .Loadable) continue;
         // Get segment in program file
         const segment_slice = @ptrCast(

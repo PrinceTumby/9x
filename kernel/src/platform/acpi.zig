@@ -73,7 +73,7 @@ pub const Madt = packed struct {
         entry_length: u8,
     };
 
-    pub const EntryType = packed enum(u8) {
+    pub const EntryType = enum(u8) {
         LocalApic = 0,
         IoApic = 1,
         InterruptSourceOverride = 2,
@@ -200,7 +200,7 @@ pub const Fadt = packed struct {
         access_size: AccessSize,
         address: u64,
 
-        pub const AddressSpace = extern enum(u8) {
+        pub const AddressSpace = enum(u8) {
             SystemMemory = 0,
             SystemIo = 1,
             PciConfigurationSpace = 2,
@@ -215,7 +215,7 @@ pub const Fadt = packed struct {
             _,
         };
 
-        pub const AccessSize = extern enum(u8) {
+        pub const AccessSize = enum(u8) {
             WidthByte = 1,
             Width16 = 2,
             Width32 = 3,

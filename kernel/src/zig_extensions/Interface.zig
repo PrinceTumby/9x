@@ -40,7 +40,7 @@ fn verifyImplementationInner(comptime self: Interface, comptime implementation: 
         const implementation_info = @typeInfo(implementation).Struct;
         // Check that all interface declarations exist in implementation
         for (interface_info.decls) |interface_decl| {
-            implementation_loop: for (implementation_info.decls) |implementation_decl| {
+            for (implementation_info.decls) |implementation_decl| {
                 // Check the name, check if it's public, check they're the same type
                 if (!std.mem.eql(u8, interface_decl.name, implementation_decl.name)) continue;
                 if (!implementation_decl.is_pub) return "`" ++

@@ -1,6 +1,9 @@
 const acpi = @import("../acpi.zig");
 const AcpiTableHeader = acpi.AcpiTableHeader;
-usingnamespace @import("acpica_types.zig");
+const types = @import("acpica_types.zig");
+const AcpiStatus = types.AcpiStatus;
+const AcpiBoolean = types.AcpiBoolean;
+const AcpiTableDesc = types.AcpiTableDesc;
 
 // TODO Add descriptions and fix signatures
 
