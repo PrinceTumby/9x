@@ -4,7 +4,7 @@ const logging = root.logging;
 const LogWriter = logging.LogWriter;
 const page_allocator = root.arch.page_allocation.page_allocator_ptr;
 const heap_allocator = root.heap.heap_allocator_ptr;
-const acpica = @import("../../acpica.zig");
+const acpica = @import("../../acpica_9x.zig");
 const AcpiStatus = acpica.AcpiStatus;
 const AcpiBoolean = acpica.AcpiBoolean;
 

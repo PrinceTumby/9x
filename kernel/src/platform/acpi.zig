@@ -1,6 +1,6 @@
-pub const acpica = @import("acpi/acpica.zig");
+pub const acpica = @import("acpi/acpica_9x.zig");
 
-comptime {_ = @import("acpi/acpica.zig");}
+comptime { _ = @import("acpi/acpica_9x.zig"); }
 
 const std = @import("std");
 const root = @import("root");
