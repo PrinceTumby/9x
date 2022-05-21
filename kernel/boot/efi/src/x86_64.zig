@@ -160,13 +160,6 @@ pub const PageMapper = struct {
         };
     }
     
-    // pub fn new() Self {
-    //     const address = asm ("mov %%cr3, %[out]" : [out] "=r" (-> u64));
-    //     return Self{
-    //         .page_table = @intToPtr(*align(4096) PageTable, address & 0x000FFFFFFFFFF000),
-    //     };
-    // }
-
     pub fn translateAddress(self: *const Self, virtual_address: u64) ?u64 {
         const level_masks = [_]u64{
             0xFF80_0000_0000,
@@ -292,42 +285,6 @@ pub const PageMapper = struct {
             }
         }
     }
-
-    // pub fn load(self: *const Self) void {
-    //     const new_cr3 = @ptrToInt(self.page_table) & 0x0FFFFFFFFFFFF000;
-    //     asm volatile ("movq %[page_table], %%cr3"
-    //         :
-    //         : [page_table] "r" (new_cr3)
-    //         : "memory"
-    //     );
-    //     asm volatile ("pause" ::: "memory");
-    //     // Force reload kernel pages
-    //     // const level_3_table = self.page_table[511].getPtr();
-    //     // for (level_3_table) |level_3_entry, level_3_index| {
-    //     //     if (!level_3_entry.isPresent()) continue;
-    //     //     for (level_3_entry.getPtr()) |level_2_entry, level_2_index| {
-    //     //         if (!level_2_entry.isPresent()) continue;
-    //     //         for (level_2_entry.getPtr()) |level_1_entry, level_1_index| {
-    //     //             if (!level_1_entry.isPresent()) continue;
-    //     //             const address = 0o1_777_777_770_000_000_000_000
-    //     //                 | (level_3_index << 30)
-    //     //                 | (level_2_index << 21)
-    //     //                 | (level_1_index << 21);
-    //     //             asm volatile ("invlpg (%[addr])" :: [addr] "r" (address));
-    //     //         }
-    //     //     }
-    //     // }
-    //     // asm volatile (
-    //     //     \\movq %%cr4, %%rax
-    //     //     \\andq ~0x80, %%rax
-    //     //     \\movq %%rax, %%cr4
-    //     //     \\orq 0x80, %%rax
-    //     //     \\movq %%rax, %%cr4
-    //     //     :
-    //     //     :
-    //     //     : "rax", "memory"
-    //     // );
-    // }
 };
 
 const gdt: [8]u64 align(16) = [_]u64{

@@ -10,9 +10,6 @@ const build_options = @import("../../../config/config.zig");
 pub fn build(b: *Builder) void {
     const build_mode = b.standardReleaseOptions();
 
-    // b.verbose = true;
-    // b.verbose_link = true;
-
     // ACPICA library
     const patched_acpica_files = comptime blk: {
         var patched_files = acpica_files;
@@ -54,57 +51,6 @@ pub fn build(b: *Builder) void {
         "built.txt",
         ")",
     });
-    // TODO Redo the include files, remaking "acenv.h" and "ac9x.h" based on other platform files
-
-    // // ACPICA library
-    // const acpica_library = b.addStaticLibrary("acpica", null);
-    // acpica_library.setBuildMode(build_mode);
-    // acpica_library.setTarget(CrossTarget{
-    //     .cpu_arch = Target.Cpu.Arch.x86_64,
-    //     .os_tag = Target.Os.Tag.freestanding,
-    //     .abi = Target.Abi.gnu,
-    // });
-    // acpica_library.force_pic = true;
-    // // acpica_library.code_model = .kernel;
-    // acpica_library.addIncludeDir("src/platform/acpi/acpica/include");
-    // acpica_library.defineCMacro("__9x__");
-    // acpica_library.defineCMacro("B_9X_64_BIT");
-    // acpica_library.defineCMacro("_DEBUG=0");
-    // for (acpica_files) |file_path| {
-    //     acpica_library.addCSourceFile(file_path, &[_][]const u8{});
-    // }
-    // acpica_library.setVerboseCC(true);
-    // acpica_library.setVerboseLink(true);
-
-    // // ACPICA Library
-    // const acpica_library = b.addSystemCommand(&[_][]const u8{
-    //     "wsl",
-    //     "zig",
-    //     "build",
-    //     "--build-file",
-    //     "build_acpica.zig",
-    // });
-
-    // Multiboot stub
-    // const multiboot = b.addExecutable("multiboot_stub", null);
-    // multiboot.addAssemblyFile("boot/multiboot/src/entry.s");
-    // multiboot.setBuildMode(build_mode);
-    // multiboot.setTarget(CrossTarget{
-    //     .cpu_arch = Target.Cpu.Arch.x86_64,
-    //     .os_tag = Target.Os.Tag.freestanding,
-    //     .abi = Target.Abi.gnu,
-    // });
-    // multiboot.setLinkerScriptPath("boot/multiboot/link.ld");
-    // multiboot.setOutputDir("boot/multiboot/out");
-    // multiboot.force_pic = true;
-    // multiboot.disable_stack_probing = true;
-    // multiboot.strip = true;
-    // const multiboot2 = b.addSystemCommand(&[_][]const u8{
-    //     "nasm",
-    //     "-f bin",
-    //     "boot/multiboot2/src/entry.asm",
-    //     "-o boot/multiboot2/out/multiboot2_stub.bin",
-    // });
 
     // Main kernel executable
     const kernel = b.addExecutable("kernel_unstripped", "src/main.zig");
@@ -120,15 +66,9 @@ pub fn build(b: *Builder) void {
     kernel.force_pic = true;
     kernel.code_model = .kernel;
     kernel.single_threaded = true;
-    // kernel.red_zone = false;
     kernel.disable_stack_probing = true;
-    // kernel.linkLibrary(acpica_library);
-    // kernel.setVerboseCC(true);
-    // kernel.setVerboseLink(true);
     kernel.addCSourceFile("src/platform/acpi/acpica_9x/zig/os_layer_extra.c", &[_][]const u8{});
     kernel.step.dependOn(&acpica_library.step);
-    // kernel.addLibPath("build-cache");
-    // kernel.linkSystemLibraryName("acpica");
     inline for (acpica_object_names) |file_path| {
         kernel.addObjectFile("build-cache/" ++ file_path);
     }
