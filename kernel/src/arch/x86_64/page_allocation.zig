@@ -67,6 +67,35 @@ pub const PageAllocator = struct {
         self.memory_map[byte_index] &= ~(@as(u8, 0x80) >> bit_offset);
     }
 
+    /// Returns whether an address is identity mapped
+    pub fn isAddressIdentityMapped(self: *const PageAllocator, address: u64) bool {
+        const level_masks = [_]u64{
+            0xFF80_0000_0000,
+            0x007F_C000_0000,
+            0x0000_3FE0_0000,
+            0x0000_001F_F000,
+        };
+        var current_address = self.page_table.getAddress();
+        for (level_masks) |level_mask, i| {
+            const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
+            if (@ptrToInt(current_table_ptr) == address) {
+                return true;
+            }
+            const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
+            const index = @truncate(
+                u9,
+                (level_mask & address) >> @truncate(u6, (3 - i) * 9 + 12),
+            );
+            var entry = current_table[index];
+            // Allocate page if required
+            if (!entry.isPresent() or entry.isHugePage()) {
+                return false;
+            }
+            current_address = entry.getAddress();
+        }
+        return false;
+    }
+
     /// Maps physical memory to virtual memory at start offsets. Setting the
     /// physical start equal to the virtual start identity maps memory.
     /// `flags` are the flags applied to child pages.

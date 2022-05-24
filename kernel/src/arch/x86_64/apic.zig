@@ -4,6 +4,7 @@ const assertEqual = root.misc.assertEqual;
 const page_allocator = @import("page_allocation.zig").page_allocator_ptr;
 const heap_allocator = root.heap.heap_allocator_ptr;
 const logging = root.logging;
+
 const logger = std.log.scoped(.x86_64_apic);
 
 pub const LocalApic = struct {
@@ -154,8 +155,10 @@ pub const LocalApic = struct {
     };
 
     pub fn init(base_address: usize) LocalApic {
-        page_allocator.offsetMapMem(base_address, base_address, 0x3, 0x1000)
-            catch @panic("out of memory");
+        if (!page_allocator.isAddressIdentityMapped(base_address)) {
+            page_allocator.offsetMapMem(base_address, base_address, 0x3, 0x1000)
+                catch @panic("out of memory");
+        }
         return LocalApic{ .base_address = base_address };
     }
 
@@ -326,8 +329,10 @@ pub const IoApic = struct {
     };
 
     pub fn init(base_address: usize, id: u32, global_system_interrupt_base: u32) IoApic {
-        page_allocator.offsetMapMem(base_address, base_address, 0x3, 0x1000)
-            catch @panic("out of memory");
+        if (!page_allocator.isAddressIdentityMapped(base_address)) {
+            page_allocator.offsetMapMem(base_address, base_address, 0x3, 0x1000)
+                catch @panic("out of memory");
+        }
         var io_apic = IoApic{
             .base_address = base_address,
             .id = id,
