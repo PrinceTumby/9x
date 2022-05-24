@@ -18,11 +18,11 @@ TEXT_DISPLAY_END = 0xffffffff5fffffff;
 
 PHDRS
 {
-    stack PT_LOAD;
-    init PT_LOAD;
-    text PT_LOAD;
+    stack PT_LOAD FLAGS(0x6); /* Read and Write */
+    init PT_LOAD FLAGS(0x7); /* Read, Write, Execute */
+    text PT_LOAD FLAGS(0x5); /* Read and Execute */
     data PT_LOAD;
-    rodata PT_LOAD;
+    rodata PT_LOAD FLAGS(0x4); /* Read only */
     bss PT_LOAD;
 }
 SECTIONS
@@ -36,7 +36,6 @@ SECTIONS
         KEEP(*(.init*))
     } :init
     .text ALIGN(4K) : {
-        KEEP(*(.multiboot*))
         *(.text*)
     } :text
     .data ALIGN(4K) : {

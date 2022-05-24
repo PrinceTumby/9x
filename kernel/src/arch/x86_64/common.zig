@@ -19,14 +19,14 @@ pub const KernelArgs = extern struct {
     memory_map: extern struct {
         /// Pointer to the start of the memory map
         ptr: [*]u8,
-        /// Size of the memory map in bytes
-        size: usize,
+        /// Length of the memory map in bytes
+        len: usize,
         /// Size of area represented by map
         mapped_size: usize,
     },
     initrd: extern struct {
         ptr: [*]const u8,
-        size: usize,
+        len: usize,
     },
     arch: extern struct {
         efi_ptr: ?[*]const u8,
@@ -40,13 +40,19 @@ pub const KernelArgs = extern struct {
         len: usize,
     },
 
+    pub const PtrType = enum(u32) {
+        Physical,
+        Linear,
+    };
+
     pub const Framebuffer = extern struct {
         ptr: [*]volatile u32,
+        ptr_type: PtrType = .Physical,
         size: u32,
         width: u32,
         height: u32,
         scanline: u32,
-        color_format: ColorFormat,
+        color_format: ColorFormat = .BGRR8,
         /// Bitmasks for specifying color positions in u32.
         /// All values are undefined if color_info_format != .Bitmask
         color_bitmask: ColorBitmask = undefined,

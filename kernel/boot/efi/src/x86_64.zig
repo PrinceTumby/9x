@@ -345,8 +345,14 @@ pub const KernelArgs = extern struct {
         len: usize,
     },
 
+    pub const PtrType = enum(u32) {
+        Physical,
+        Linear,
+    };
+
     pub const Framebuffer = extern struct {
         ptr: [*]volatile u8,
+        ptr_type: PtrType = .Physical,
         size: u32,
         width: u32,
         height: u32,

@@ -123,7 +123,7 @@ pub noinline fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace
     // Print stack trace
     if (!disable_trace_logging) {
         logging.logRawLn("STACK TRACE:", .{});
-        if (!disable_trace_logging) printStackTrace(trace_maybe);
+        printStackTrace(trace_maybe);
         logging.logRawLn("END OF TRACE", .{});
     } else {
         logging.logRawLn("STACK TRACES DISABLED", .{});

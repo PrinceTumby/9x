@@ -670,6 +670,7 @@ pub fn main() void {
     if (fb_ptr) |framebuffer_pointer| {
         framebuffers_ptr[0] = .{
             .ptr = framebuffer_pointer,
+            .ptr_type = .Physical,
             .size = fb_size,
             .width = fb_width,
             .height = fb_height,

@@ -29,7 +29,7 @@ pub const PageAllocator = struct {
     page_table: PageTableEntry,
 
     pub const page_size: usize = 4096;
-    pub const large_page_size = 4096 * 512;
+    pub const large_page_size: usize = page_size * 512;
     pub const byte_ratio: usize = page_size * 8;
 
     pub fn new(page_table: *[512]u64, memory_map: []u8, num_pages: usize) PageAllocator {
@@ -54,19 +54,16 @@ pub const PageAllocator = struct {
                     (group_index * byte_ratio) + (index * page_size),
                 );
             }
-        }
-        return error.OutOfMemory;
+        } else return error.OutOfMemory;
     }
 
     // TODO Add support for freeing huge pages
     /// Marks a page as no longer reserved.
     /// SAFETY: The caller is expected to no longer use references to this page
-    pub fn freePage(self: *PageAllocator, address: u64) !void {
+    pub fn freePage(self: *PageAllocator, address: u64) void {
         const byte_index = address / byte_ratio;
         const bit_offset = @truncate(u3, address / page_size);
-        if (byte_index * 8 + bit_offset >= self.num_pages) {
-            return error.OutOfBounds;
-        }
+        if (byte_index * 8 + bit_offset >= self.num_pages) return;
         self.memory_map[byte_index] &= ~(@as(u8, 0x80) >> bit_offset);
     }
 
@@ -264,6 +261,7 @@ pub const PageAllocator = struct {
         flags: u64,
     ) !void {
         const new_page_address = @ptrToInt(try self.findAndReservePage());
+        errdefer self.freePage(new_page_address);
         try self.offsetMapMem(new_page_address, virtual_address, flags, PageAllocator.page_size);
     }
 
@@ -297,7 +295,7 @@ pub const PageAllocator = struct {
             }
         }
         // Free page
-        self.freePage(final_page.getAddress()) catch {};
+        self.freePage(final_page.getAddress());
         final_page.* = comptime PageTableEntry.fromU64(0);
         return true;
     }

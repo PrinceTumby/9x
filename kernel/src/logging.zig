@@ -181,6 +181,9 @@ pub fn logRawLn(comptime format: []const u8, args: anytype) void {
     if (screen_writer) |writer| {
         fmt.format(writer, format ++ "\n", args) catch {};
     }
+    for (abstract_writers.constSlice()) |writer| {
+        fmt.format(writer, format ++ "\n", args) catch {};
+    }
 }
 
 pub fn logRaw(comptime format: []const u8, args: anytype) void {
@@ -189,6 +192,9 @@ pub fn logRaw(comptime format: []const u8, args: anytype) void {
     // fmt.format(com1_writer, format, args) catch {};
     fmt.format(bochs_writer, format, args) catch {};
     if (screen_writer) |writer| {
+        fmt.format(writer, format, args) catch {};
+    }
+    for (abstract_writers.constSlice()) |writer| {
         fmt.format(writer, format, args) catch {};
     }
 }
@@ -225,6 +231,9 @@ pub fn logNoNewline(
     if (screen_writer) |writer| {
         fmt.format(writer, prefix ++ format, args) catch {};
     }
+    for (abstract_writers.constSlice()) |writer| {
+        fmt.format(writer, prefix ++ format, args) catch {};
+    }
 }
 
 // HACK: The {s} format specifier currently doesn't work, so this is a workaround
@@ -246,6 +255,11 @@ pub fn logString(
     bochs_writer.writeAll(string) catch return;
     bochs_writer.writeAll("\n") catch return;
     if (screen_writer) |writer| {
+        writer.writeAll(prefix ++ prefix_string) catch return;
+        writer.writeAll(string) catch return;
+        writer.writeByte('\n') catch return;
+    }
+    for (abstract_writers.constSlice()) |writer| {
         writer.writeAll(prefix ++ prefix_string) catch return;
         writer.writeAll(string) catch return;
         writer.writeByte('\n') catch return;

@@ -51,6 +51,11 @@ pub extern var FONT_END: u8;
 pub extern var FRAMEBUFFER_START: u32;
 pub extern var FRAMEBUFFER_END: u32;
 
+pub fn breakpointLine(src: std.builtin.SourceLocation) void {
+    logger.debug("{s}:{}", .{src.file, src.line});
+    // asm volatile ("xchgw %%bx, %%bx");
+}
+
 // Called by the architecture specific initialisation code
 export fn kernel_main(args: *KernelArgs) noreturn {
     kernel_args = args;
@@ -61,14 +66,15 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     initPageAllocator(
         args.page_table_ptr,
         args.memory_map.ptr,
-        args.memory_map.size,
+        args.memory_map.len,
         args.memory_map.mapped_size,
     );
+    logger.debug("Page allocator initialised, map size {}", .{page_allocator.memory_map.len});
     arch.stage1Init(args);
     heap.initHeap(@ptrCast([*]u8, &HEAP_BASE)[0..HEAP_SIZE])
         catch @panic("heap initialisation failed");
-    logger.debug("Heap initialised", .{});
-    const initrd = args.initrd.ptr[0..args.initrd.size];
+    logger.debug("Heap initialised: root block {}", .{heap.list_head.?});
+    const initrd = args.initrd.ptr[0..args.initrd.len];
     outer: {
         if (args.framebuffers.len < 1) {
             logger.debug("No framebuffer found", .{});
@@ -78,8 +84,8 @@ export fn kernel_main(args: *KernelArgs) noreturn {
             logger.debug("Framebuffer failed initialisation: {}", .{err});
             break :outer;
         };
-        fb_initialised = true;
         fb.clear();
+        fb_initialised = true;
         if (cpio.cpioFindFile(initrd, font_path)) |font_file| {
             // Init debug text display
             const font = text_lib.Font.init(
@@ -89,12 +95,14 @@ export fn kernel_main(args: *KernelArgs) noreturn {
                 &fb,
                 font,
                 heap_allocator,
-            ) catch break :outer;
+            // ) catch break :outer;
+            ) catch |err| {
+                logger.debug("text display initialisation failed: {}", .{err});
+                break :outer;
+            };
             text_display_initialised = true;
             logging.enableTextDisplayLogger(&text_display);
-        } else {
-            @panic("text display failed to initialise");
-        }
+        } else break :outer;
     }
     if (text_display_initialised)
         logger.debug("Framebuffer initialised", .{})
@@ -151,7 +159,6 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     }
     const entry_pos = program_elf.header.prog_entry_pos;
     logger.debug("Mapped test program, switching address spaces...", .{});
-    // asm volatile ("hlt");
     asm volatile ("movq %%rax, %%cr3"
         :
         : [page_table] "{rax}" (mem_mapper.page_table.getAddress())

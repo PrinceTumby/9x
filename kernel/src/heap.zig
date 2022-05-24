@@ -13,7 +13,9 @@ const arch = root.arch;
 const page_allocator = arch.page_allocation.page_allocator_ptr;
 const alignToPage = arch.paging.alignToPage;
 
-const Block = packed struct {
+const logger = std.log.scoped(.heap);
+
+pub const Block = packed struct {
     /// Length of the block area, should be u30 for 32-bit and u62 for 64-bit
     len: LenType,
     /// Whether the block is used, if `false` the block is free
@@ -68,7 +70,7 @@ const page_flags = arch.paging.PageTableEntry.generateU64(.{
     .no_execute = false, // No execute
 });
 
-var list_head: ?*Block = null;
+pub var list_head: ?*Block = null;
 
 /// Initialises an area of virtual memory for use as heap space.
 ///
@@ -136,6 +138,7 @@ fn alloc(
         }
         return @intToPtr([*]u8, start_addr)[0 .. end_addr - start_addr + 1];
     } else {
+        logger.debug("Out of blocks!", .{});
         return error.OutOfMemory;
     }
 }

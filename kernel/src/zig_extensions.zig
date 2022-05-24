@@ -33,6 +33,10 @@ pub fn BoundedArray(comptime T: type, comptime capacity: comptime_int) type {
             self.len += 1;
         }
 
+        pub fn clear(self: *Self) void {
+            self.len = 0;
+        }
+
         pub inline fn capacity(self: Self) usize {
             return capacity;
         }

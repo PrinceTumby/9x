@@ -17,21 +17,34 @@ pub const FrameBuffer = struct {
 
     pub fn init(args: FramebufferArgs) !FrameBuffer {
         const size: u32 = args.height * args.scanline;
-        const fb_phys_addr = @ptrToInt(args.ptr);
-        // Map the framebuffer in upper memory with write combining flags
-        try page_allocator.offsetMapMem(
-            fb_phys_addr,
-            @ptrToInt(&root.FRAMEBUFFER_START),
-            PageTableEntry.framebuffer_flags,
-            size * 4,
-        );
-        return FrameBuffer{
-            .fb = @ptrCast([*]volatile u32, &root.FRAMEBUFFER_START)[0..size],
-            .width = args.width,
-            .height = args.height,
-            .scanline = args.scanline,
-            .format = args.color_format,
-        };
+        switch (args.ptr_type) {
+            .Physical => {
+                const fb_phys_addr = @ptrToInt(args.ptr);
+                // Map the framebuffer in upper memory with write combining flags
+                try page_allocator.offsetMapMem(
+                    fb_phys_addr,
+                    @ptrToInt(&root.FRAMEBUFFER_START),
+                    PageTableEntry.framebuffer_flags,
+                    size * 4,
+                );
+                return FrameBuffer{
+                    .fb = @ptrCast([*]volatile u32, &root.FRAMEBUFFER_START)[0..size],
+                    .width = args.width,
+                    .height = args.height,
+                    .scanline = args.scanline,
+                    .format = args.color_format,
+                };
+            },
+            .Linear => {
+                return FrameBuffer{
+                    .fb = args.ptr[0..size],
+                    .width = args.width,
+                    .height = args.height,
+                    .scanline = args.scanline,
+                    .format = args.color_format,
+                };
+            },
+        }
     }
 
     /// Clears the screen to all black
