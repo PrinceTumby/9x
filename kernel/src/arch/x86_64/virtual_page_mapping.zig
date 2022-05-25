@@ -154,6 +154,56 @@ pub const VirtualPageMapper = struct {
         }
     }
 
+    /// Returns the flags for an address, or `null` if the address isn't mapped
+    pub fn getFlagsForAddress(
+        self: *const VirtualPageMapper,
+        virtual_address: u64,
+    ) ?PageTableEntry {
+        const level_masks = [_]u64{
+            0xFF80_0000_0000,
+            0x007F_C000_0000,
+            0x0000_3FE0_0000,
+            0x0000_001F_F000,
+        };
+        const page_address = virtual_address & 0xFFFFFFFFFFFFF000;
+        var current_address = self.page_table.getAddress();
+        var entry: PageTableEntry = undefined;
+        for (level_masks) |level_mask, i| {
+            const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
+            const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
+            const index = @truncate(
+                u9,
+                (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
+            );
+            entry = current_table[index];
+            // logger.debug(
+            //     \\Found entry:
+            //     \\  - Address: 0x{x}
+            //     \\  - Present: {}
+            //     \\  - Writable: {}
+            //     \\  - User Accessable: {}
+            //     \\  - Huge Page: {}
+            //     \\  - Global: {}
+            //     \\  - No Execute: {}
+            //     , .{
+            //         entry.getAddress(),
+            //         entry.isPresent(),
+            //         entry.isWritable(),
+            //         entry.isUserAccessable(),
+            //         entry.isHugePage(),
+            //         entry.isGlobal(),
+            //         entry.isNoExecute(),
+            //     }
+            // );
+            // Return null if address not mapped
+            if (!entry.isPresent()) return null;
+            // Return immediately if entry is a huge page
+            if (entry.isHugePage()) return entry;
+            current_address = entry.getAddress();
+        }
+        return entry;
+    }
+
     // TODO Optimize by keeping count of number of pages done, stay at deepest level
     /// Sets the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Relaxes permissions for parent pages where necessary.

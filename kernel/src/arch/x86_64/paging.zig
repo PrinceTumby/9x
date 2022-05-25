@@ -19,43 +19,43 @@ pub const PageTableEntry = packed struct {
     }
 
     pub fn isPresent(self: Self) bool {
-        return self.__data & 0x0000000000000001 == 1;
+        return self.__data & 0x0000000000000001 != 0;
     }
 
     pub fn isWritable(self: Self) bool {
-        return self.__data & 0x0000000000000002 == 1;
+        return self.__data & 0x0000000000000002 != 0;
     }
 
     pub fn isUserAccessable(self: Self) bool {
-        return self.__data & 0x0000000000000004 == 1;
+        return self.__data & 0x0000000000000004 != 0;
     }
 
     pub fn writeThroughCachingEnabled(self: Self) bool {
-        return self.__data & 0x0000000000000008 == 1;
+        return self.__data & 0x0000000000000008 != 0;
     }
 
     pub fn cacheDisabled(self: Self) bool {
-        return self.__data & 0x0000000000000010 == 1;
+        return self.__data & 0x0000000000000010 != 0;
     }
 
     pub fn isAccessed(self: Self) bool {
-        return self.__data & 0x0000000000000020 == 1;
+        return self.__data & 0x0000000000000020 != 0;
     }
 
     pub fn isDirty(self: Self) bool {
-        return self.__data & 0x0000000000000040 == 1;
+        return self.__data & 0x0000000000000040 != 0;
     }
 
     pub fn isHugePage(self: Self) bool {
-        return self.__data & 0x0000000000000080 == 1;
+        return self.__data & 0x0000000000000080 != 0;
     }
 
     pub fn isGlobal(self: Self) bool {
-        return self.__data & 0x0000000000000100 == 1;
+        return self.__data & 0x0000000000000100 != 0;
     }
 
     pub fn isNoExecute(self: Self) bool {
-        return self.__data & 0x8000000000000000 == 1;
+        return self.__data & 0x8000000000000000 != 0;
     }
 
     pub const framebuffer_flags: u64 = 0x8000000000000083;

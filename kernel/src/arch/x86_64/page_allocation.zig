@@ -75,10 +75,11 @@ pub const PageAllocator = struct {
             0x0000_3FE0_0000,
             0x0000_001F_F000,
         };
+        const page_address = address & 0xFFFFFFFFFFFFF000;
         var current_address = self.page_table.getAddress();
         for (level_masks) |level_mask, i| {
             const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
-            if (@ptrToInt(current_table_ptr) == address) {
+            if (@ptrToInt(current_table_ptr) == page_address) {
                 return true;
             }
             const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
@@ -86,14 +87,42 @@ pub const PageAllocator = struct {
                 u9,
                 (level_mask & address) >> @truncate(u6, (3 - i) * 9 + 12),
             );
-            var entry = current_table[index];
-            // Allocate page if required
-            if (!entry.isPresent() or entry.isHugePage()) {
-                return false;
-            }
+            const entry = current_table[index];
+            if (!entry.isPresent()) return false;
+            if (entry.isHugePage() and entry.getAddress() == page_address) return true;
             current_address = entry.getAddress();
         }
         return false;
+    }
+
+    /// Returns the flags for an address, or `null` if the address isn't mapped
+    pub fn getFlagsForAddress(
+        self: *const PageAllocator,
+        virtual_address: u64,
+    ) ?PageTableEntry {
+        const level_masks = [_]u64{
+            0xFF80_0000_0000,
+            0x007F_C000_0000,
+            0x0000_3FE0_0000,
+            0x0000_001F_F000,
+        };
+        var current_address = self.page_table.getAddress();
+        var entry: PageTableEntry = undefined;
+        for (level_masks) |level_mask, i| {
+            const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
+            const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
+            const index = @truncate(
+                u9,
+                (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
+            );
+            entry = current_table[index];
+            // Return null if address not mapped
+            if (!entry.isPresent()) return null;
+            // Return immediately if entry is a huge page
+            if (entry.isHugePage()) return entry;
+            current_address = entry.getAddress();
+        }
+        return entry;
     }
 
     /// Maps physical memory to virtual memory at start offsets. Setting the
@@ -196,7 +225,7 @@ pub const PageAllocator = struct {
                     u9,
                     (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
                 );
-                var entry = current_table[index];
+                const entry = current_table[index];
                 // Allocate page if required
                 if (!entry.isPresent()) {
                     continue :outer;
@@ -248,7 +277,7 @@ pub const PageAllocator = struct {
                     u9,
                     (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
                 );
-                var entry = current_table[index];
+                const entry = current_table[index];
                 // Allocate page if required
                 if (!entry.isPresent()) {
                     continue :outer;
@@ -314,7 +343,7 @@ pub const PageAllocator = struct {
                 u9,
                 (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
             );
-            var entry = current_table[index];
+            const entry = current_table[index];
             if (entry.isHugePage()) @panic("large pages not supported");
             if (i == 3) {
                 if (!entry.isPresent()) return false;
@@ -370,18 +399,15 @@ pub const PageAllocator = struct {
                     u9,
                     (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
                 );
-                var entry = current_table[index];
+                const entry = current_table[index];
                 // Check flags
-                if (!(entry.isPresent() and entry.__data & actual_flags == actual_flags)) {
-                    current_address = entry.getAddress();
-                } else {
+                if (!entry.isPresent() or entry.__data & actual_flags != actual_flags) {
                     return false;
+                } else {
+                    current_address = entry.getAddress();
                 }
             }
         }
         return true;
     }
-
-    // TODO Add in ways to check flags on a memory range, as well as a way to update
-    // some flags and leave others unchanged over a memory range
 };
