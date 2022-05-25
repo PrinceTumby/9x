@@ -68,7 +68,7 @@ pub fn loadTssIntoGdt() void {
         .limit = 0,
     };
     asm volatile ("sgdt (%[ptr])" :: [ptr] "r" (&ptr) : "memory");
-    const gdt = @intToPtr(*[7]u64, ptr.base);
+    const gdt = @intToPtr(*[8]u64, ptr.base);
     // Load TSS into GDT
     _ = initTss();
     const tss_descriptor = gdt_module.Descriptor.tssSegment(&tss).system_segment;

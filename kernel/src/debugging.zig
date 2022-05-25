@@ -111,11 +111,13 @@ pub noinline fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace
         0 => {},
         // Disable screen
         1 => root.logging.removeLogDevice(),
-        2 => {
+        2 => disable_trace_logging = true,
+        3 => {
             logging.logString(.emerg, .main, "KERNEL PANIC: ", message);
             while (true) waitForInterrupt();
         },
-        else => while (true) waitForInterrupt(),
+        4 => while (true) waitForInterrupt(),
+        else => while (true) {},
     }
     panic_depth += 1;
     // logger.emerg("KERNEL PANIC: {s}", .{message});

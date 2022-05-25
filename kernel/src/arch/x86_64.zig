@@ -45,6 +45,7 @@ comptime {
 // Initialisation steps
 
 pub fn stage1Init(_args: *KernelArgs) void {
+    gdt.loadNoReloadSegmentDescriptors();
     tss.loadTssIntoGdt();
     interrupts.initIDT();
 }

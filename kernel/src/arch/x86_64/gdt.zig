@@ -92,7 +92,7 @@ pub const Descriptor = union(enum) {
     }
 };
 
-var gdt: [7]u64 align(16) = [_]u64{
+var gdt: [9]u64 align(16) = [_]u64{
     // Null
     0x0001_0000_0000_FFFF,
     // Code
@@ -105,10 +105,12 @@ var gdt: [7]u64 align(16) = [_]u64{
     0x0000_0000_0000_0000,
     // Ring 3 32-Bit Code
     Descriptor.Flags.user_code_32,
-    // Ring 3 Data
+    // Ring 3 Data for 32-Bit Code
     Descriptor.Flags.user_data,
     // Ring 3 64-Bit Code
     Descriptor.Flags.user_code_64,
+    // Ring 3 Data for 64-Bit Code
+    Descriptor.Flags.user_data,
 };
 
 pub const offset = struct {
@@ -116,9 +118,28 @@ pub const offset = struct {
     pub const kernel_data: u16 = 16;
     pub const tss: u16 = 24;
     pub const user_code_32: u16 = 40;
-    pub const user_data: u16 = 48;
+    pub const user_data_32: u16 = 48;
     pub const user_code_64: u16 = 56;
+    pub const user_data_64: u16 = 64;
 };
+
+pub const index = struct {
+    pub const kernel_code: u16 = 1;
+    pub const kernel_data: u16 = 2;
+    pub const tss: u16 = 3;
+    pub const user_code_32: u16 = 5;
+    pub const user_data_32: u16 = 6;
+    pub const user_code_64: u16 = 7;
+    pub const user_data_64: u16 = 8;
+};
+
+pub fn loadNoReloadSegmentDescriptors() void {
+    var ptr: DescriptorTablePointer align(8) = DescriptorTablePointer{
+        .base = @ptrToInt(&gdt),
+        .limit = @sizeOf(@TypeOf(gdt)) - 1,
+    };
+    asm volatile ("lgdt (%[ptr])" :: [ptr] "r" (&ptr) : "memory");
+}
 
 // pub fn reloadSegmentDescriptors() void {
 //     asm volatile (

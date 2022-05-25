@@ -33,6 +33,17 @@ const exception_handlers = struct {
         @panic(msg_ptr[0..msg_len]);
     }
 
+    export fn pageFaultExceptionMessage(
+        msg_ptr: [*]u8,
+        msg_len: usize,
+        error_code: u32,
+        address: usize,
+    ) noreturn {
+        exception_logger.debug("Error code: 0x{X}", .{error_code});
+        exception_logger.debug("Caused by access to address: 0x{x}", .{address});
+        @panic(msg_ptr[0..msg_len]);
+    }
+
     comptime {
         asm (
             \\.macro exception name, message
@@ -42,17 +53,35 @@ const exception_handlers = struct {
             \\  .global \name;
             \\  .type \name, @function;
             \\  \name:
-            \\    hlt
             \\    movq (%rsp), %rax
-            \\    hlt
             \\    andq $-16, %rsp
-            \\    hlt
             \\    movq $1b, %rdi
             \\    movq $2b - 1b, %rsi
             \\    pushq %rax
             \\    pushq %rbp
             \\    movq %rsp, %rbp
             \\    callq exceptionMessage
+            \\  .size \name, . - \name
+            \\.endm
+            \\
+            \\.macro pageFaultException name, message
+            \\  1:
+            \\  .ascii "\message"
+            \\  2:
+            \\  .global \name;
+            \\  .type \name, @function;
+            \\  \name:
+            \\    movq 8(%rsp), %rax
+            \\    movq (%rsp), %rdx
+            \\    andq $-16, %rsp
+            \\    movq $1b, %rdi
+            \\    movq $2b - 1b, %rsi
+            \\    movq %cr2, %rcx
+            \\    pushq %rax
+            \\    pushq %rbp
+            \\    movq %rsp, %rbp
+            \\    callq pageFaultExceptionMessage
+            \\  .size \name, . - \name
             \\.endm
             \\
             \\.macro exceptionErrCode name, message
@@ -62,11 +91,8 @@ const exception_handlers = struct {
             \\  .global \name;
             \\  .type \name, @function;
             \\  \name:
-            \\    hlt
             \\    movq 8(%rsp), %rax
-            \\    hlt
             \\    movq (%rsp), %rdx
-            \\    hlt
             \\    andq $-16, %rsp
             \\    movq $1b, %rdi
             \\    movq $2b - 1b, %rsi
@@ -74,6 +100,7 @@ const exception_handlers = struct {
             \\    pushq %rbp
             \\    movq %rsp, %rbp
             \\    callq exceptionMessageWithErrCode
+            \\  .size \name, . - \name
             \\.endm
             \\
             \\exception divideByZero, "EXCEPTION: DIVIDE BY ZERO"
@@ -88,7 +115,7 @@ const exception_handlers = struct {
             \\exceptionErrCode segmentNotPresent, "EXCEPTION: SEGMENT NOT PRESENT"
             \\exceptionErrCode stackSegmentFault, "EXCEPTION: STACK SEGMENT FAULT"
             \\exceptionErrCode generalProtectionFault, "EXCEPTION: GENERAL PROTECTION FAULT"
-            \\exceptionErrCode pageFault, "EXCEPTION: PAGE FAULT"
+            \\pageFaultException pageFault, "EXCEPTION: PAGE FAULT"
             \\exception x87FloatingPoint, "EXCEPTION: x87 FLOATING POINT"
             \\exceptionErrCode alignmentException, "EXCEPTION: ALIGNMENT EXCEPTION"
             \\exception machineCheck, "EXCEPTION: MACHINE CHECK"

@@ -109,11 +109,18 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     else
         logger.debug("Framebuffer not initialised", .{});
     arch.stage2Init(args);
-    // Load IA32_STAR
-    arch.common.msr.write(arch.common.msr.IA32_STAR, @as(u64, arch.gdt.offset.user_code_32) << 48);
-    // Load IA32_FMASK
-    arch.common.msr.write(arch.common.msr.IA32_FMASK, 0x2);
-    logger.debug("Set IA32_STAR and IA32_FMASK", .{});
+    {
+        // Load IA32_STAR
+        const user_base: u64 = arch.gdt.offset.user_code_64;
+        const kernel_base: u64 = arch.gdt.offset.kernel_code;
+        arch.common.msr.write(arch.common.msr.IA32_STAR, user_base << 48 | kernel_base << 32);
+        // Load IA32_LSTAR
+        logger.debug("Loading IA32_LSTAR with 0x{x}", .{@ptrToInt(syscallEntrypoint)});
+        arch.common.msr.write(arch.common.msr.IA32_LSTAR, @ptrToInt(syscallEntrypoint));
+        // Load IA32_FMASK
+        arch.common.msr.write(arch.common.msr.IA32_FMASK, ~@as(u32, 0x2));
+        logger.debug("Set IA32_STAR, IA32_LSTAR and IA32_FMASK", .{});
+    }
     // Parse test program ELF
     const test_program_path = "bin/sys/test_program";
     const test_program = cpio.cpioFindFile(initrd, test_program_path)
@@ -151,12 +158,6 @@ export fn kernel_main(args: *KernelArgs) noreturn {
             entry.segment_memory_size,
         );
     }
-    for (@intToPtr(*[512]u64, mem_mapper.page_table.getAddress())) |entry, i| {
-        if (entry != 0) logger.debug("Entry {}: {X}", .{i, entry});
-    }
-    for (@intToPtr(*[512]u64, page_allocator.page_table.getAddress())) |entry, i| {
-        if (entry != 0) logger.debug("Entry {}: {X}", .{i, entry});
-    }
     const entry_pos = program_elf.header.prog_entry_pos;
     logger.debug("Mapped test program, switching address spaces...", .{});
     asm volatile ("movq %%rax, %%cr3"
@@ -165,89 +166,59 @@ export fn kernel_main(args: *KernelArgs) noreturn {
         : "memory"
     );
     logger.debug("Address spaces switched!", .{});
-    // TODO Figure out why interrupts don't work in switched address space
     arch.interrupts.kernel_idt.load();
-    // asm volatile ("hlt");
-    @breakpoint();
-    asm volatile ("hlt");
-    // asm volatile ("callq *%[code]" :: [code] "r" (entry_pos));
     logger.debug("Running test program...", .{});
-    // asm volatile ("hlt");
+    asm volatile ("xchgw %%bx, %%bx");
     asm volatile ("sysretq"
         :
         : [rip] "{rcx}" (entry_pos),
           [flags] "{r11}" (@as(u64, 2))
     );
-    asm volatile ("hlt");
-    // Find a page to store user code
-    const code_test_page = page_allocator.findAndReservePage() catch @panic("out of memory");
-    logger.debug("Allocated page at 0x{x}", .{@ptrToInt(code_test_page)});
-    // Write cli instruction (invalid in ring 3)
-    // @intToPtr(*volatile u8, 0xDEADBEEF0).* = 255;
-    // logger.debug("{}", .{@intToPtr(*volatile u8, 0xDEADBEEF0).*});
-    const test_bytes = [_]u8{
-        0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00, // leaq loop(%rip), %rax
-        // loop:
-        0xFF, 0xE0, // jmp *%rax
-        // 0xFA, // cli
-        0xC3, // retq
-    };
-    for (test_bytes) |byte, i| {
-        code_test_page[i] = byte;
-    }
-    logger.debug("Written test program", .{});
-    // Change page to executable only
-    page_allocator.changeFlagsRelaxing(
-        @ptrToInt(code_test_page),
-        arch.paging.PageTableEntry.generateU64(.{
-            .present = true,
-            .writable = false,
-            .user_accessable = true,
-        }),
-        4096,
-    );
-    logger.debug("Set flags", .{});
-    // logger.debug("Running test...", .{});
-    // asm volatile ("sti");
-    // logger.debug("RFLAGS: {X}", .{asm ("pushf; popq %[out]" : [out] "=r" (-> usize))});
-    // asm volatile ("callq *%[code]" :: [code] "r" (@ptrToInt(code_test_page)));
-    // logger.debug("RFLAGS: {X}", .{asm ("pushf; popq %[out]" : [out] "=r" (-> usize))});
-    // Execute code
-    asm volatile (
-        "sysretq"
-        :
-        : [rip] "{rcx}" (@ptrToInt(code_test_page)),
-          [flags] "{r11}" (@as(u64, 0x2))
-    );
-    // logger.debug("Keyboard tests:", .{});
-    // var fadt: *platform.acpi.Fadt = undefined;
-    // if (platform.acpi.acpica.table_manager.getTable(platform.acpi.Fadt, 1, &fadt).isErr()) {
-    //     @panic("FADT not found");
-    // }
-    // logger.debug("8042 controller present: {}", .{
-    //     fadt.arch_flags & platform.acpi.Fadt.arch_flag_values.ps2_8042_present != 0,
-    // });
-    // arch.ps2_manager.init() catch |err| {
-    //     logger.err("PS/2 Manager Initialisation error: {}", .{err});
-    //     @panic("PS/2 init error");
-    // };
-    // logger.debug("Inititalised PS/2 manager", .{});
-    // logger.debug("Now accepting keyboard input:", .{});
-    // if (arch.ps2_manager.keyboard) |keyboard| {
-    //     while (true) {
-    //         // logger.debug("Got byte: {}", .{keyboard.port.readByteBlocking()});
-    //         const char = keyboard.getNextCharacter();
-    //         // logging.log(.debug, .main, "{c}", .{char});
-    //         logging.logRaw("{c}", .{char});
-    //         // logging.logRaw("{c}", .{keyboard.getNextCharacter()});
-    //         // logger.debug("{c}", .{keyboard.getNextCharacter()});
-    //     }
-    // }
+    // TODO IT WORKS!! Now to sort out basic system calls for more testing
     logger.debug("KERNEL END", .{});
     while (true) {
         asm volatile ("hlt");
     }
 }
+
+export fn debugFromC(message_ptr: [*]const u8, message_len: usize) void {
+    logging.logString(.debug, .C, "", message_ptr[0..message_len]);
+}
+
+extern fn syscallEntrypoint() callconv(.Naked) void;
+
+// export fn syscallEntrypoint() callconv(.Naked) void {
+//     asm volatile (
+//         \\pushq %%rax
+//         \\pushq %%rcx
+//         \\pushq %%rdx
+//         \\pushq %%r8
+//         \\pushq %%r9
+//         \\pushq %%r10
+//         \\pushq %%r11
+//     );
+//     debugFromC(
+//         asm ("" : [message_ptr] "={rdi}" (-> [*]const u8)),
+//         asm ("" : [message_len] "={rsi}" (-> usize)),
+//     );
+//     asm volatile (
+//         \\movq $0, %%rdi
+//         \\movq $0, %%rsi
+//         \\popq %%r11
+//         \\popq %%r10
+//         \\popq %%r9
+//         \\popq %%r8
+//         \\popq %%rdx
+//         \\popq %%rcx
+//         \\popq %%rax
+//         \\sysretq
+//     );
+// }
+
+// export fn syscallEntrypoint() callconv(.Interrupt) void {
+//     var test_var = asm volatile ("movq $8, %[out]" : [out] "=r" (-> usize));
+//     asm volatile ("" :: [test_var] "r" (test_var));
+// }
 
 const PrintMessageTaskArgs = struct {
     message: []const u8,
