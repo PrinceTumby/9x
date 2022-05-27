@@ -20,7 +20,8 @@ const InterruptDescriptorTable = idt.InterruptDescriptorTable;
 const exception_handlers = struct {
     const exception_logger = std.log.scoped(.x86_64_exception);
 
-    export fn exceptionMessage(msg_ptr: [*]u8, msg_len: usize) noreturn {
+    export fn exceptionMessage(msg_ptr: [*]u8, msg_len: usize, rip: usize) noreturn {
+        exception_logger.emerg("Caused by instruction at: 0x{x}", .{rip});
         @panic(msg_ptr[0..msg_len]);
     }
 
@@ -28,8 +29,10 @@ const exception_handlers = struct {
         msg_ptr: [*]u8,
         msg_len: usize,
         error_code: u32,
+        rip: usize,
     ) noreturn {
-        exception_logger.debug("Error code: 0x{X}", .{error_code});
+        exception_logger.emerg("Error code: 0x{X}", .{error_code});
+        exception_logger.emerg("Caused by instruction at: 0x{x}", .{rip});
         @panic(msg_ptr[0..msg_len]);
     }
 
@@ -37,10 +40,12 @@ const exception_handlers = struct {
         msg_ptr: [*]u8,
         msg_len: usize,
         error_code: u32,
-        address: usize,
+        access_address: usize,
+        rip: usize,
     ) noreturn {
-        exception_logger.debug("Error code: 0x{X}", .{error_code});
-        exception_logger.debug("Caused by access to address: 0x{x}", .{address});
+        exception_logger.emerg("Error code: 0x{X}", .{error_code});
+        exception_logger.emerg("Caused by access to address: 0x{x}", .{access_address});
+        exception_logger.emerg("By instruction at 0x{x}", .{rip});
         @panic(msg_ptr[0..msg_len]);
     }
 
@@ -53,11 +58,11 @@ const exception_handlers = struct {
             \\  .global \name;
             \\  .type \name, @function;
             \\  \name:
-            \\    movq (%rsp), %rax
+            \\    movq (%rsp), %rdx
             \\    andq $-16, %rsp
             \\    movq $1b, %rdi
             \\    movq $2b - 1b, %rsi
-            \\    pushq %rax
+            \\    pushq %rdx
             \\    pushq %rbp
             \\    movq %rsp, %rbp
             \\    callq exceptionMessage
@@ -71,13 +76,14 @@ const exception_handlers = struct {
             \\  .global \name;
             \\  .type \name, @function;
             \\  \name:
-            \\    movq 8(%rsp), %rax
+            \\    movq 32(%rsp), %rbp
+            \\    movq 8(%rsp), %r8
             \\    movq (%rsp), %rdx
             \\    andq $-16, %rsp
             \\    movq $1b, %rdi
             \\    movq $2b - 1b, %rsi
             \\    movq %cr2, %rcx
-            \\    pushq %rax
+            \\    pushq %r8
             \\    pushq %rbp
             \\    movq %rsp, %rbp
             \\    callq pageFaultExceptionMessage
@@ -91,12 +97,12 @@ const exception_handlers = struct {
             \\  .global \name;
             \\  .type \name, @function;
             \\  \name:
-            \\    movq 8(%rsp), %rax
+            \\    movq 8(%rsp), %rcx
             \\    movq (%rsp), %rdx
             \\    andq $-16, %rsp
             \\    movq $1b, %rdi
             \\    movq $2b - 1b, %rsi
-            \\    pushq %rax
+            \\    pushq %rcx
             \\    pushq %rbp
             \\    movq %rsp, %rbp
             \\    callq exceptionMessageWithErrCode

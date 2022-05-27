@@ -1,6 +1,9 @@
 //! Support for outputting text through COM ports for debugging
 
 const std = @import("std");
+const common = @import("common.zig");
+const portReadByte = common.port.readByte;
+const portWriteByte = common.port.writeByte;
 
 pub fn Port(comptime port: u16) type {
     return struct {
@@ -19,64 +22,30 @@ pub fn Port(comptime port: u16) type {
 
         // TODO Implement checking if serial port is already initialised
         pub fn init() bool {
-            return asm volatile (
-                \\// Disable all interrupts
-                \\movw %[interrupt_reg], %%dx
-                \\movb $0x00, %%al
-                \\outb %%al, %%dx
-                \\// Enable DLAB and set baud rate divisor
-                \\movw %[line_control_reg], %%dx
-                \\movb $0x80, %%al
-                \\outb %%al, %%dx
-                \\movw %[div_low], %%dx
-                \\movb $0x01, %%al
-                \\outb %%al, %%dx
-                \\movw %[div_high], %%dx
-                \\movb $0x00, %%al
-                \\outb %%al, %%dx
-                \\// Disable DLAB, set 8 bits, no parity, 1 stop bit
-                \\movw %[line_control_reg], %%dx
-                \\movb $0x03, %%al
-                \\outb %%al, %%dx
-                \\// Enable FIFOs, clear them, with 14-byte threshold
-                \\movw %[fifo_reg], %%dx
-                \\movb $0xC7, %%al
-                \\outb %%al, %%dx
-                \\// Enable IRQs, RTS/DSR set
-                \\movw %[modem_control_reg], %%dx
-                \\movb $0x0B, %%al
-                \\outb %%al, %%dx
-                \\// Set in loopback mode, test serial chip
-                \\movw %[modem_control_reg], %%dx
-                \\movb $0x1E, %%al
-                \\outb %%al, %%dx
-                \\// Test serial chip (send 0xAE and check if same byte is returned)
-                \\movw %[data], %%dx
-                \\movb $0xAE, %%al
-                \\outb %%al, %%dx
-                \\inb %%dx, %%al
-                \\cmpb $0xAE, %%al
-                \\jnz loopback_failed
-                \\// Serial not faulty, set normal operation
-                \\// (normal mode, IRQs enabled, OUT#1 and OUT#2 bits enabled)
-                \\movw %[modem_control_reg], %%dx
-                \\movb $0x0F, %%al
-                \\outb %%al, %%dx
-                \\movb $1, %[out]
-                \\jmp end
-                \\loopback_failed:
-                \\movb $0, %[out]
-                \\end:
-                : [out] "=r" (-> u8)
-                : [data] "i" (data),
-                  [interrupt_reg] "i" (interrupt_enable_reg),
-                  [line_control_reg] "i" (line_control_reg),
-                  [div_low] "i" (divisor_low),
-                  [div_high] "i" (divisor_high),
-                  [fifo_reg] "i" (fifo_control_reg),
-                  [modem_control_reg] "i" (modem_control_reg)
-                : "al", "dx"
-            ) == 1;
+            // Check if port exists by writing to scratch register
+            const scratch_incremented = portReadByte(scratch_reg) +% 1;
+            portWriteByte(scratch_reg, scratch_incremented);
+            if (portReadByte(scratch_reg) != scratch_incremented) return false;
+            // Wipe scratch register back to 0
+            portWriteByte(scratch_reg, 0x00);
+            // Disable all interrupts
+            portWriteByte(interrupt_enable_reg, 0x00);
+            // Enable DLAB, set rate to 38400 baud
+            portWriteByte(line_control_reg, 0x80);
+            portWriteByte(divisor_low, 0x03);
+            portWriteByte(divisor_high, 0x00);
+            // Disable DLAB, set 8 bits, no parity, 1 stop bit
+            portWriteByte(line_control_reg, 0x03);
+            // Enable FIFOs, clear them, set 14-byte threshold
+            portWriteByte(fifo_control_reg, 0xC7);
+            // Set loopback mode
+            portWriteByte(modem_control_reg, 0x10);
+            // Send 0xAE, check if port returns same byte
+            portWriteByte(data, 0xAE);
+            if (readByte() != 0xAE) return false;
+            // Set normal operation mode if serial is not faulty
+            portWriteByte(modem_control_reg, 0x00);
+            return true;
         }
 
         pub inline fn readByte() u8 {

@@ -111,7 +111,7 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     arch.stage2Init(args);
     {
         // Load IA32_STAR
-        const user_base: u64 = arch.gdt.offset.user_code_64;
+        const user_base: u64 = arch.gdt.offset.user_code_32;
         const kernel_base: u64 = arch.gdt.offset.kernel_code;
         arch.common.msr.write(arch.common.msr.IA32_STAR, user_base << 48 | kernel_base << 32);
         // Load IA32_LSTAR
@@ -186,39 +186,6 @@ export fn debugFromC(message_ptr: [*]const u8, message_len: usize) void {
 }
 
 extern fn syscallEntrypoint() callconv(.Naked) void;
-
-// export fn syscallEntrypoint() callconv(.Naked) void {
-//     asm volatile (
-//         \\pushq %%rax
-//         \\pushq %%rcx
-//         \\pushq %%rdx
-//         \\pushq %%r8
-//         \\pushq %%r9
-//         \\pushq %%r10
-//         \\pushq %%r11
-//     );
-//     debugFromC(
-//         asm ("" : [message_ptr] "={rdi}" (-> [*]const u8)),
-//         asm ("" : [message_len] "={rsi}" (-> usize)),
-//     );
-//     asm volatile (
-//         \\movq $0, %%rdi
-//         \\movq $0, %%rsi
-//         \\popq %%r11
-//         \\popq %%r10
-//         \\popq %%r9
-//         \\popq %%r8
-//         \\popq %%rdx
-//         \\popq %%rcx
-//         \\popq %%rax
-//         \\sysretq
-//     );
-// }
-
-// export fn syscallEntrypoint() callconv(.Interrupt) void {
-//     var test_var = asm volatile ("movq $8, %[out]" : [out] "=r" (-> usize));
-//     asm volatile ("" :: [test_var] "r" (test_var));
-// }
 
 const PrintMessageTaskArgs = struct {
     message: []const u8,

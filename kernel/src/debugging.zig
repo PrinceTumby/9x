@@ -60,14 +60,12 @@ pub noinline fn printStackTrace(trace_maybe: ?*std.builtin.StackTrace) void {
                 } else {
                     logging.logRawLn("  [0x{x}] ???+??/??", .{address});
                 }
-                std.fmt.format(logging.bochs_writer, "0x{x}\n", .{address}) catch {};
                 // std.fmt.format(logging.com4_writer, "0x{x}\n", .{address}) catch {};
             }
         } else {
             logging.logRawLn("Symbol table unavailable", .{});
             for (trace.instruction_addresses) |address| {
                 logging.logRawLn("  [0x{x}] ???+??/??", .{address});
-                std.fmt.format(logging.bochs_writer, "0x{x}\n", .{address}) catch {};
                 // std.fmt.format(logging.com4_writer, "0x{x}\n", .{address}) catch {};
             }
         }
@@ -90,14 +88,12 @@ pub noinline fn printStackTrace(trace_maybe: ?*std.builtin.StackTrace) void {
                 } else {
                     logging.logRawLn("  [0x{x}] ???+??/??", .{address});
                 }
-                std.fmt.format(logging.bochs_writer, "0x{x}\n", .{address}) catch {};
                 // std.fmt.format(logging.com4_writer, "0x{x}\n", .{address}) catch {};
             }
         } else {
             logging.logRawLn("Symbol table unavailable", .{});
             while (stackTraceNext(&trace_iter)) |address| {
                 logging.logRawLn("  [0x{x}] ???+??/??", .{address});
-                std.fmt.format(logging.bochs_writer, "0x{x}\n", .{address}) catch {};
                 // std.fmt.format(logging.com4_writer, "0x{x}\n", .{address}) catch {};
             }
         }
@@ -107,11 +103,15 @@ pub noinline fn printStackTrace(trace_maybe: ?*std.builtin.StackTrace) void {
 var panic_depth: usize = 0;
 
 pub noinline fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace) noreturn {
+    if (logging.writer_lock.isLocked()) {
+        root.logging.removeLogDevice();
+        logging.writer_lock.forceRelease();
+    }
     switch (panic_depth) {
         0 => {},
+        1 => disable_trace_logging = true,
         // Disable screen
-        1 => root.logging.removeLogDevice(),
-        2 => disable_trace_logging = true,
+        2 => root.logging.removeLogDevice(),
         3 => {
             logging.logString(.emerg, .main, "KERNEL PANIC: ", message);
             while (true) waitForInterrupt();

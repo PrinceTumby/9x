@@ -27,9 +27,9 @@ PHDRS
 }
 SECTIONS
 {
-    . = STACK_BASE;
+    . = STACK_BASE + 0x1000;
     .stack (NOLOAD) : {
-        . = STACK_BASE + 0xFF0;
+        . = STACK_BASE + 0x7FF0;
     } :stack
     . = KERNEL_BASE;
     .init : {

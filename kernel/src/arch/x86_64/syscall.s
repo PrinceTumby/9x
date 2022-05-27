@@ -22,16 +22,18 @@ syscallEntrypoint:
     sysretq
 .size syscallEntrypoint, . - syscallEntrypoint
 
-.type syscallPrintDebugMessage, @function
-syscallPrintDebugMessage:
+.macro syscall2Def name
+    .type \name, @function
+    \name:
     pushq %rcx
     pushq %rdx
     pushq %r8
     pushq %r9
     pushq %r10
     pushq %r11
-    callq debugFromC
-    movq $0, %rax
+.endm
+
+.macro syscall2End name
     movq $0, %rdi
     movq $0, %rsi
     popq %r11
@@ -41,4 +43,12 @@ syscallPrintDebugMessage:
     popq %rdx
     popq %rcx
     sysretq
-.size syscallPrintDebugMessage, . - syscallPrintDebugMessage
+.size \name, . - \name
+.endm
+
+// TODO Use swapgs, change to kernel information
+// TODO Sort out interrupts, more system calls
+syscall2Def syscallPrintDebugMessage
+    callq debugFromC
+    movq $0, %rax
+syscall2End syscallPrintDebugMessage

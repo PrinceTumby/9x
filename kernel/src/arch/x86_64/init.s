@@ -106,7 +106,7 @@ init64:
 
 0:
     // -- Switch to allocated kernel stack --
-    movq $0xFFFFFFFF20000FF0, %rsp
+    movq $0xFFFFFFFF20007FF0, %rsp
     pushq $0
     movq %rsp, %rbp
     andq $-16, %rsp

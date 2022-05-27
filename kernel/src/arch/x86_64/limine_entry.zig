@@ -238,15 +238,20 @@ fn limine_entry() callconv(.C) void {
            total_mappable_size / 4096,
        );
     };
-    // Allocate kernel stack
-    page_allocator.mapPage(
-        @ptrToInt(&STACK_BASE),
-        paging.PageTableEntry.generateU64(.{
-            .present = true,
-            .writable = true,
-            .no_execute = true,
-        }),
-    ) catch @panic("out of memory allocating kernel stack");
+    // Allocate 28K + guard page for kernel stack
+    {
+        var current_stack_page: usize = @ptrToInt(&STACK_BASE) + (4096 * 7);
+        while (current_stack_page > @ptrToInt(&STACK_BASE)) : (current_stack_page -= 4096) {
+            page_allocator.mapPage(
+                current_stack_page,
+                paging.PageTableEntry.generateU64(.{
+                    .present = true,
+                    .writable = true,
+                    .no_execute = true,
+                }),
+            ) catch @panic("out of memory allocating kernel stack");
+        }
+    }
     // Allocate kernel arguments
     const kernel_args_ptr = @ptrCast(
         *KernelArgs,

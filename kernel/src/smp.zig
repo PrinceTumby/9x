@@ -1,7 +1,9 @@
 //! Multithreading synchronisation primitives
 
-const builtin = @import("std").builtin;
-const multicore_support = @import("root").build_options.multicore_support;
+const std = @import("std");
+const builtin = std.builtin;
+const root = @import("root");
+const multicore_support = root.build_options.multicore_support;
 
 pub const SpinLock = if (multicore_support) struct {
     state: State = .Unlocked,
@@ -27,6 +29,10 @@ pub const SpinLock = if (multicore_support) struct {
         self.* = undefined;
     }
 
+    pub fn isLocked(self: *SpinLock) bool {
+        return @atomicLoad(State, &self.state, .Acquire) == .Locked;
+    }
+
     pub fn tryAcquire(self: *SpinLock) ?Held {
         return switch (@atomicRmw(State, &self.state, .Xchg, .Locked, .Acquire)) {
             .Unlocked => Held{ .spinlock = self },
@@ -41,6 +47,11 @@ pub const SpinLock = if (multicore_support) struct {
                 continue;
             };
         }
+    }
+
+    /// Used to force a poisoned lock to be released
+    pub fn forceRelease(self: *SpinLock) void {
+        @atomicStore(State, &self.state, .Unlocked, .Release);
     }
 
     fn spin() void {

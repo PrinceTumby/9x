@@ -27,16 +27,8 @@ pub const platform = struct {
     pub const acpi = @import("../platform/acpi.zig");
 };
 
-const std = @import("std");
-const KernelArgs = common.KernelArgs;
-const logger = std.log.scoped(.x86_64);
-const root = @import("root");
-const heap_allocator = root.heap.heap_allocator_ptr;
-const acpica = platform.acpi.acpica;
-const AcpiStatus = acpica.AcpiStatus;
-const AcpiBoolean = acpica.AcpiBoolean;
-
 // Bootloader stubs
+
 const limine_entry = @import("x86_64/limine_entry.zig");
 comptime {
     _ = limine_entry;
@@ -44,13 +36,25 @@ comptime {
 
 // Initialisation steps
 
+const std = @import("std");
+const KernelArgs = common.KernelArgs;
+const root = @import("root");
+const logging = root.logging;
+const heap_allocator = root.heap.heap_allocator_ptr;
+const acpica = platform.acpi.acpica;
+const AcpiStatus = acpica.AcpiStatus;
+const AcpiBoolean = acpica.AcpiBoolean;
+
+const logger = std.log.scoped(.x86_64);
+
 pub fn stage1Init(_args: *KernelArgs) void {
     gdt.loadNoReloadSegmentDescriptors();
     tss.loadTssIntoGdt();
     interrupts.initIDT();
+    logging.tryEnableSerialWriters();
+    // Enable bochs writer if port returns 0xE9
+    if (common.port.readByte(0xE9) == 0xE9) logging.bochs_writer = .{};
 }
-
-// var table_array: [16]acpica.AcpiTableDesc = undefined;
 
 pub fn stage2Init(args: *KernelArgs) void {
     // Initialise TLS

@@ -4,7 +4,6 @@ comptime { _ = @import("acpi/acpica_9x.zig"); }
 
 const std = @import("std");
 const root = @import("root");
-const logging = root.logging;
 const logger = std.log.scoped(.acpi);
 
 pub const Rsdp = packed struct {
@@ -42,7 +41,6 @@ pub fn findTable(xsdt: *const AcpiTableHeader, comptime Table: type) ?*Table {
         const table_pointer = @intToPtr(*AcpiTableHeader, pointer.*);
         logger.debug("table found:", .{});
         logger.debug("address {x}", .{pointer.*});
-        // logging.logString(.debug, .acpi, "signature ", &table_pointer.signature);
         logger.debug("signature {s}", .{&table_pointer.signature});
         if (std.mem.eql(u8, &table_pointer.signature, Table.table_signature)) {
             return @ptrCast(*Table, table_pointer);

@@ -5,12 +5,10 @@ const root = @import("root");
 const smp = root.smp;
 const page_allocator = root.arch.page_allocation.page_allocator_ptr;
 
-const logger = std.log.scoped(.text_lib);
-
 const psf_magic = 0x864ab572;
 const psf_version = 0x0;
 
-const blank_char_8_16: [16]u8 = [_]u8 { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+const blank_char_8_16: [16]u8 = [1]u8 {0} ** 16;
 
 const PSFHeader = packed struct {
     magic: u32 = psf_magic,

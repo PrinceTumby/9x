@@ -20,6 +20,10 @@ pub fn SerialWriter(comptime port: type) type {
 
         pub const Error = error {};
 
+        pub fn tryInit() ?Self {
+            return if (port.init()) Self{} else null;
+        }
+
         pub fn writeAll(self: Self, bytes: []const u8) Error!void {
             for (bytes) |byte| {
                 if (byte == '\n') port.writeByte('\r');
@@ -156,14 +160,22 @@ pub const AbstractWriter = struct {
 
 pub const log_writer: LogWriter = .{};
 
-// pub const com1_writer: SerialWriter(serial.Com1) = .{};
-pub const com2_writer: SerialWriter(serial.Com2) = .{};
-pub const com3_writer: SerialWriter(serial.Com3) = .{};
-pub const com4_writer: SerialWriter(serial.Com4) = .{};
-pub const bochs_writer = BochsWriter{};
+pub var com1_writer: ?SerialWriter(serial.Com1) = null;
+pub var com2_writer: ?SerialWriter(serial.Com2) = null;
+pub var com3_writer: ?SerialWriter(serial.Com3) = null;
+pub var com4_writer: ?SerialWriter(serial.Com4) = null;
+pub var bochs_writer: ?BochsWriter = null;
+// pub const bochs_writer: ?BochsWriter = null;
 pub var abstract_writers = BoundedArray(AbstractWriter, 8){};
-var screen_writer: ?ScreenWriter = null;
-var writer_lock = smp.SpinLock.init();
+pub var screen_writer: ?ScreenWriter = null;
+pub var writer_lock = smp.SpinLock.init();
+
+pub fn tryEnableSerialWriters() void {
+    com1_writer = SerialWriter(serial.Com1).tryInit();
+    com2_writer = SerialWriter(serial.Com2).tryInit();
+    com3_writer = SerialWriter(serial.Com3).tryInit();
+    com4_writer = SerialWriter(serial.Com4).tryInit();
+}
 
 pub fn enableTextDisplayLogger(screen: *text_lib.TextDisplay(Framebuffer)) void {
     screen_writer = .{.text_display = screen};
@@ -176,8 +188,12 @@ pub fn removeLogDevice() void {
 pub fn logRawLn(comptime format: []const u8, args: anytype) void {
     const lock = writer_lock.acquire();
     defer lock.release();
-    // fmt.format(com1_writer, format ++ "\n", args) catch {};
-    fmt.format(bochs_writer, format ++ "\n", args) catch {};
+    if (bochs_writer) |writer| {
+        fmt.format(writer, format ++ "\n", args) catch {};
+    }
+    if (com1_writer) |writer| {
+        fmt.format(writer, format ++ "\n", args) catch {};
+    }
     if (screen_writer) |writer| {
         fmt.format(writer, format ++ "\n", args) catch {};
     }
@@ -189,8 +205,12 @@ pub fn logRawLn(comptime format: []const u8, args: anytype) void {
 pub fn logRaw(comptime format: []const u8, args: anytype) void {
     const lock = writer_lock.acquire();
     defer lock.release();
-    // fmt.format(com1_writer, format, args) catch {};
-    fmt.format(bochs_writer, format, args) catch {};
+    if (bochs_writer) |writer| {
+        fmt.format(writer, format, args) catch {};
+    }
+    if (com1_writer) |writer| {
+        fmt.format(writer, format, args) catch {};
+    }
     if (screen_writer) |writer| {
         fmt.format(writer, format, args) catch {};
     }
@@ -208,8 +228,12 @@ pub fn log(
     const lock = writer_lock.acquire();
     defer lock.release();
     const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
-    // fmt.format(com1_writer, prefix ++ format ++ "\n", args) catch {};
-    fmt.format(bochs_writer, prefix ++ format ++ "\n", args) catch {};
+    if (bochs_writer) |writer| {
+        fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
+    }
+    if (com1_writer) |writer| {
+        fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
+    }
     if (screen_writer) |writer| {
         fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
     }
@@ -227,7 +251,12 @@ pub fn logNoNewline(
     const lock = writer_lock.acquire();
     defer lock.release();
     const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
-    // fmt.format(com1_writer, prefix ++ format, args) catch {};
+    if (bochs_writer) |writer| {
+        fmt.format(writer, prefix ++ format, args) catch {};
+    }
+    if (com1_writer) |writer| {
+        fmt.format(writer, prefix ++ format, args) catch {};
+    }
     if (screen_writer) |writer| {
         fmt.format(writer, prefix ++ format, args) catch {};
     }
@@ -248,12 +277,16 @@ pub fn logString(
     const lock = writer_lock.acquire();
     defer lock.release();
     const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
-    // com1_writer.writeAll(prefix ++ prefix_string) catch return;
-    // com1_writer.writeAll(string) catch return;
-    // com1_writer.writeAll("\n") catch return;
-    bochs_writer.writeAll(prefix ++ prefix_string) catch return;
-    bochs_writer.writeAll(string) catch return;
-    bochs_writer.writeAll("\n") catch return;
+    if (bochs_writer) |writer| {
+        writer.writeAll(prefix ++ prefix_string) catch return;
+        writer.writeAll(string) catch return;
+        writer.writeByte('\n') catch return;
+    }
+    if (com1_writer) |writer| {
+        writer.writeAll(prefix ++ prefix_string) catch return;
+        writer.writeAll(string) catch return;
+        writer.writeByte('\n') catch return;
+    }
     if (screen_writer) |writer| {
         writer.writeAll(prefix ++ prefix_string) catch return;
         writer.writeAll(string) catch return;
