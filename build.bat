@@ -1,7 +1,7 @@
 @echo off
 setlocal
 if "%1%"=="x86_64-efi" goto x64efi
-if "%1%"=="x86_64-grub" goto x64grub
+:: if "%1%"=="x86_64-grub" goto x64grub
 if "%1%"=="x86_64-limine" goto x64limine
 :: if "%1%"=="riscv64-qemu" goto riscv64qemu
 echo Usage: build [command]
@@ -9,7 +9,7 @@ echo.
 echo Commands:
 echo.
 echo   x86_64-efi           Build an x86_64 9x iso using the EFI loader
-echo   x86_64-grub          Build an x86_64 9x iso using the GRUB bootloader
+:: echo   x86_64-grub          Build an x86_64 9x iso using the GRUB bootloader
 echo   x86_64-limine        Build an x86_64 9x iso using the Limine bootloader
 :: echo   rv64-qemu            Build an RV64GC 9x iso as QEMU bios
 echo.
@@ -26,7 +26,7 @@ echo Building:
 :: Kernel building
 echo - Compiling kernel...
 cd kernel
-cmd /k "zig build -Drelease-safe=true & exit"
+cmd /k "zig build -Drelease-safe=true -Dbuild-efi-stub=true & exit"
 if %errorlevel% NEQ 0 (
     goto :compfailed
 )

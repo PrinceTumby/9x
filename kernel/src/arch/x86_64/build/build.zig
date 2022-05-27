@@ -91,7 +91,12 @@ pub fn build(b: *Builder) void {
     multiboot2.step.dependOn(&kernel_stripped.step);
     b.default_step.dependOn(&multiboot2.step);
 
-    if (build_options.efi.efi_stub_enabled) {
+    const build_efi_stub: bool = b.option(
+        bool,
+        "build-efi-stub",
+        "Builds the compiled kernel into an EFI program for direct booting",
+    ) orelse false;
+    if (build_efi_stub) {
         const efi = b.addExecutable("bootx64", "boot/efi/src/main.zig");
         efi.step.dependOn(&kernel_stripped.step);
         efi.setBuildMode(build_mode);
