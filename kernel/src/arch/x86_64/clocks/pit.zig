@@ -27,7 +27,7 @@ pub fn eventHandlerApic(
 
 /// Calls `start_func`, waits an arbitrary amount of time, then calls `end_func`.
 /// The amount of time slept is then returned. Useful for calibrating other clocks.
-/// The PIT must not be mapped to an IRQ and should not currently be in use.
+/// The PIT must not be mapped to an IRQ or be in use.
 pub fn calibrateOther(start_func: fn() void, end_func: fn() void) usize {
     // Prepare PIT
     asm volatile ("cli");

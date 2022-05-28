@@ -6,6 +6,7 @@ const std = @import("std");
 pub const pit = @import("clocks/pit.zig");
 pub const apic_timer = @import("clocks/apic_timer.zig");
 pub const cmos = @import("clocks/cmos.zig");
+pub const rtc = @import("clocks/rtc.zig");
 
 pub const Clock = enum {
     Pit,
@@ -31,8 +32,8 @@ pub var calibration_timers = struct {
     /// Only ever true if the exact APIC timer
     /// tick rate is able to be found via CPUID
     apic: bool = false,
-    rtc: bool = false,
     pit: bool = false,
+    rtc: bool = true,
     cmos: bool = true,
 }{};
 
@@ -47,9 +48,9 @@ pub var counters = struct {
     tsc: bool = false,
     hpet: bool = false,
     // Emulated counters
-    rtc: bool = false,
     apic: bool = false,
     pit: bool = false,
+    rtc: bool = false,
 }{};
 
 pub var calibrationSleep: fn(startTimer: fn() void) u32 = dummyCalibrationSleep;
@@ -88,6 +89,7 @@ fn dummyStopCountdown() void {}
 
 pub fn updateClockFunctions() void {
     calibrationSleep = switch (selectClock(calibration_timers)) {
+        .Rtc => rtc.calibrationSleep,
         .Cmos => cmos.calibrationSleep,
         .None => dummyCalibrationSleep,
         else => @panic("clock manager dev bug: calibration timer unhandled"),
