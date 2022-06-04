@@ -23,9 +23,11 @@ pub fn initPageAllocator(
     );
 }
 
+// TODO Make this thread safe
 pub const PageAllocator = struct {
     memory_map: []u8,
     num_pages: usize,
+    num_pages_free: usize,
     page_table: PageTableEntry,
 
     pub const page_size: usize = 4096;
@@ -33,11 +35,21 @@ pub const PageAllocator = struct {
     pub const byte_ratio: usize = page_size * 8;
 
     pub fn new(page_table: *[512]u64, memory_map: []u8, num_pages: usize) PageAllocator {
+        // Find number of free pages
+        var free_page_count: usize = 0;
+        for (memory_map) |byte| {
+            free_page_count += @popCount(u8, ~byte);
+        }
         return PageAllocator{
             .memory_map = memory_map,
             .num_pages = num_pages,
+            .num_pages_free = free_page_count,
             .page_table = PageTableEntry.fromU64(@ptrToInt(page_table)),
         };
+    }
+
+    pub inline fn getNumPagesUsed(self: *const PageAllocator) usize {
+        return self.num_pages - self.num_pages_free;
     }
 
     /// Reserves a free page, returns the physical address if a page is found
@@ -49,6 +61,7 @@ pub const PageAllocator = struct {
                     return error.OutOfMemory;
                 }
                 byte.* |= @as(u8, 0x80) >> index;
+                self.num_pages_free -= 1;
                 return @intToPtr(
                     *allowzero align(4096) [4096]u8,
                     (group_index * byte_ratio) + (index * page_size),
@@ -65,6 +78,7 @@ pub const PageAllocator = struct {
         const bit_offset = @truncate(u3, address / page_size);
         if (byte_index * 8 + bit_offset >= self.num_pages) return;
         self.memory_map[byte_index] &= ~(@as(u8, 0x80) >> bit_offset);
+        self.num_pages_free += 1;
     }
 
     /// Returns whether an address is identity mapped

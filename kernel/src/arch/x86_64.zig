@@ -15,10 +15,12 @@ pub const clock_manager = @import("x86_64/clock_manager.zig");
 
 // Architecture specific kernel feature implementation
 
-pub const page_allocation = @import("x86_64/page_allocation.zig");
-pub const virtual_page_mapping = @import("x86_64/virtual_page_mapping.zig");
 pub const interrupts = @import("x86_64/interrupts.zig");
+pub const page_allocation = @import("x86_64/page_allocation.zig");
+pub const syscall = @import("x86_64/syscall.zig");
+pub const task = @import("x86_64/task.zig");
 pub const tls = @import("x86_64/tls.zig");
+pub const virtual_page_mapping = @import("x86_64/virtual_page_mapping.zig");
 
 // Other platform exports
 

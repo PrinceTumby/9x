@@ -9,7 +9,7 @@ const logger = std.log.scoped(.x86_64_rtc);
 var interrupt_received: bool = false;
 
 pub fn sleepHandlerApic(_interrupt_frame: *const idt.InterruptFrame) callconv(.Interrupt) void {
-    const local_apic = tls.getThreadLocalVariable("local_apic");
+    const local_apic = tls.getThreadLocalVariables().local_apic;
     interrupt_received = true;
     local_apic.apic.signalEoi();
 }

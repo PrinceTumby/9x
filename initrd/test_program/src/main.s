@@ -1,25 +1,32 @@
+.data
+
+message_ptr:
+.ascii "Hello from process "
+message_pid_char: .byte 0
+.ascii "!"
+message_len = . - message_ptr
+
 .text
 .code64
-
-message_1_ptr: .ascii "Hello from userspace!"
-message_1_len = . - message_1_ptr
-message_2_ptr: .ascii "Wow! Two round trips!"
-message_2_len = . - message_2_ptr
 
 .global _start
 .type _start, @function
 _start:
-    // Load and print messages
-    leaq message_1_ptr, %rdi
-    movq $message_1_len, %rsi
+    // Get PID, change message ID character
     movq $0, %rax
     syscall
-    leaq message_2_ptr, %rdi
-    movq $message_2_len, %rsi
-    movq $0, %rax
+    addq $48, %rax
+    movb %al, message_pid_char
+    leaq message_ptr, %rdi
+    movq $message_len, %rsi
+    movq $1, %rax
     syscall
-    leaq loop(%rip), %rax
+    movq $1, %rax
+    syscall
+    // Infinitely yield in loop
     loop:
-    jmp *%rax
+    movq $2, %rax
+    syscall
+    jmp loop
 
 .size _start, . - _start

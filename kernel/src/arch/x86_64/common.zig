@@ -1,9 +1,13 @@
-const platform = @import("root").arch.platform;
+const root = @import("root");
+const tls = @import("tls.zig");
+const platform = root.arch.platform;
+const comptimeFmt = root.zig_extensions.comptimeFmt;
+const UserProcess = root.process.UserProcess;
+const ThreadLocalVariables = tls.ThreadLocalVariables;
 
 // Ideally this will be automated in the future, but currently changing the layout of
 // this struct also requires changes to definitions in the following files (with paths
 // starting at kernel directory):
-// `src/arch/x86_64/init.s`
 // `boot/efi/src/x86_64.zig`
 /// Arguments passed to the kernel by the core loader
 pub const KernelArgs = extern struct {
@@ -39,6 +43,16 @@ pub const KernelArgs = extern struct {
         ptr: [*]const Framebuffer,
         len: usize,
     },
+
+    // Export offset of page table ptr in kernel arguments for assembly
+    comptime {
+        asm (comptimeFmt(
+            0,
+            \\.global KernelArgs.page_table_ptr
+            \\KernelArgs.page_table_ptr = {}
+            , .{@byteOffsetOf(KernelArgs, "page_table_ptr")}
+        ));
+    }
 
     pub const PtrType = enum(u32) {
         Physical,
@@ -143,3 +157,70 @@ pub const port = struct {
 pub inline fn waitForInterrupt() void {
     asm volatile ("hlt");
 }
+
+pub const process = struct {
+    pub const RegisterStore = extern struct {
+        rax: u64 = 0,
+        rbx: u64 = 0,
+        rcx: u64 = 0,
+        rdx: u64 = 0,
+        rsi: u64 = 0,
+        rdi: u64 = 0,
+        rbp: u64 = 0,
+        rsp: u64 = 0,
+        r8: u64 = 0,
+        r9: u64 = 0,
+        r10: u64 = 0,
+        r11: u64 = 0,
+        r12: u64 = 0,
+        r13: u64 = 0,
+        r14: u64 = 0,
+        r15: u64 = 0,
+        rip: u64 = 0,
+        rflags: u64 = 2,
+        fs: u64 = 0,
+        gs: u64 = 0,
+        fxsave_area: [32]u128 = [1]u128{0} ** 32,
+
+        pub const start_register_offset = @byteOffsetOf(RegisterStore, "rax");
+        pub const end_register_offset = @byteOffsetOf(RegisterStore, "gs");
+        pub const vector_store_offset = @byteOffsetOf(RegisterStore, "fxsave_area");
+
+        pub const RegisterOverrides = struct {
+            instruction_pointer: u64 = 0,
+            stack_pointer: u64 = 0,
+        };
+
+        pub fn init(register_overrides: RegisterOverrides) RegisterStore {
+            return RegisterStore{
+                .rip = register_overrides.instruction_pointer,
+                .rsp = register_overrides.stack_pointer,
+            };
+        }
+    };
+
+    pub const KernelMainRegisterStore = extern struct {
+        rbx: u64 = undefined,
+        rcx: u64 = undefined,
+        rdx: u64 = undefined,
+        rbp: u64 = undefined,
+        rsp: u64 = undefined,
+        r8: u64 = undefined,
+        r9: u64 = undefined,
+        r12: u64 = undefined,
+        r13: u64 = undefined,
+        r14: u64 = undefined,
+        r15: u64 = undefined,
+        rip: u64 = undefined,
+        fs: u64 = undefined,
+        fxsave_area: [32]u128 = undefined,
+
+        pub const start_register_offset = @byteOffsetOf(KernelMainRegisterStore, "rbx");
+        pub const end_register_offset = @byteOffsetOf(KernelMainRegisterStore, "fs");
+        pub const vector_store_offset = @byteOffsetOf(KernelMainRegisterStore, "fxsave_area");
+    };
+
+    pub fn isUserAddressValid(address: usize) bool {
+        return address < 0x00007fffffffffff;
+    }
+};

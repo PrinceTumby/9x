@@ -2,6 +2,8 @@
 
 // TODO Clean this up, document what GDT flags are for
 
+const root = @import("root");
+const asmSymbolFmt = root.zig_extensions.asmSymbolFmt;
 const DescriptorTablePointer = @import("common.zig").DescriptorTablePointer;
 const tss_module = @import("tss.zig");
 const TaskStateSegment = tss_module.TaskStateSegment;
@@ -121,6 +123,15 @@ pub const offset = struct {
     pub const user_data_32: u16 = 48;
     pub const user_code_64: u16 = 56;
     pub const user_data_64: u16 = 64;
+
+    // Offset references for assembly
+    comptime {
+        @setEvalBranchQuota(5000);
+        asm (asmSymbolFmt("GDT.kernel_code", kernel_code));
+        asm (asmSymbolFmt("GDT.kernel_data", kernel_data));
+        asm (asmSymbolFmt("GDT.user_code_64", user_code_64));
+        asm (asmSymbolFmt("GDT.user_data_64", user_data_64));
+    }
 };
 
 pub const index = struct {
@@ -140,20 +151,3 @@ pub fn loadNoReloadSegmentDescriptors() void {
     };
     asm volatile ("lgdt (%[ptr])" :: [ptr] "r" (&ptr) : "memory");
 }
-
-// pub fn reloadSegmentDescriptors() void {
-//     asm volatile (
-//         \\pushq $8
-//         \\leaq cs_set(%%rip), %%rax
-//         \\pushq %%rax
-//         \\lretq
-//         \\cs_set:
-//         \\movw $16, %%ax
-//         \\movw %%ax, %%ds
-//         \\movw %%ax, %%es
-//         \\movw %%ax, %%ss
-//         :
-//         :
-//         : "rax", "memory"
-//     );
-// }

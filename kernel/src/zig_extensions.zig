@@ -3,6 +3,20 @@ pub const overridable_properties = @import("zig_extensions/overridable_propertie
 
 const std = @import("std");
 
+pub fn comptimeFmt(
+    comptime buf_extra_len: usize,
+    comptime fmt: []const u8,
+    comptime args: anytype,
+) []const u8 {
+    var buf: [fmt.len + buf_extra_len]u8 = undefined;
+    const message = std.fmt.bufPrint(
+        &buf,
+        fmt,
+        args,
+    ) catch @compileError("Provided buffer size too small");
+    return message;
+}
+
 pub fn compileErrorFmt(comptime fmt: []const u8, comptime args: anytype) void {
     comptime {
         var buf: [4096]u8 = undefined;
@@ -13,6 +27,17 @@ pub fn compileErrorFmt(comptime fmt: []const u8, comptime args: anytype) void {
         ) catch unreachable;
         @compileError(message);
     }
+}
+
+pub fn asmSymbolFmt(comptime name: []const u8, comptime value: usize) []const u8 {
+    var value_text_buffer: [32]u8 = undefined;
+    const buffer_used = std.fmt.formatIntBuf(&value_text_buffer, value, 10, false, .{});
+    return ".global " ++
+        name ++
+        "\n" ++
+        name ++
+        " = " ++
+        value_text_buffer[0..buffer_used];
 }
 
 pub fn BoundedArray(comptime T: type, comptime capacity: comptime_int) type {

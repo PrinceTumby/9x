@@ -55,6 +55,7 @@ pub fn build(b: *Builder) void {
     // Main kernel executable
     const kernel = b.addExecutable("kernel_unstripped", "src/main.zig");
     kernel.addAssemblyFile("src/arch/x86_64/init.s");
+    kernel.addAssemblyFile("src/arch/x86_64/task.s");
     kernel.addAssemblyFile("src/arch/x86_64/syscall.s");
     kernel.setBuildMode(build_mode);
     kernel.setTarget(CrossTarget{

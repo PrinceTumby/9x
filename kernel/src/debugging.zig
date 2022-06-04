@@ -2,7 +2,7 @@ const std = @import("std");
 const root = @import("root");
 const waitForInterrupt = root.arch.common.waitForInterrupt;
 const logging = root.logging;
-const elf = root.elf;
+const debug_elf = root.debug_elf;
 
 pub var disable_trace_logging = false;
 pub var kernel_elf_file: ?[]const u8 = null;
@@ -28,9 +28,9 @@ fn stackTraceNext(trace: *std.debug.StackIterator) ?usize {
 
 pub noinline fn printStackTrace(trace_maybe: ?*std.builtin.StackTrace) void {
     // Get kernel ELF file for function names
-    const kernel_elf_maybe: ?elf.Elf = blk: {
+    const kernel_elf_maybe: ?debug_elf.Elf = blk: {
         const kernel_elf_file_slice = kernel_elf_file orelse break :blk null;
-        const parsed_elf = elf.Elf.init(kernel_elf_file_slice) catch break :blk null;
+        const parsed_elf = debug_elf.Elf.init(kernel_elf_file_slice) catch break :blk null;
         switch (parsed_elf) {
             .Bit64 => |elf_64| {
                 if (elf_64.string_table == null) break :blk null;

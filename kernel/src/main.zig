@@ -1,19 +1,20 @@
-const std = @import("std");
-const cpio = @import("cpio.zig");
 pub const build_options = @import("config/config.zig");
+pub const cpio = @import("cpio.zig");
 pub const zig_extensions = @import("zig_extensions.zig");
 pub const Framebuffer = @import("core_graphics.zig").FrameBuffer;
 pub const text_lib = @import("text_lib.zig");
+pub const debug_elf = @import("debug_elf.zig");
 pub const elf = @import("elf.zig");
 pub const heap = @import("heap.zig");
 pub const smp = @import("smp.zig");
-pub const scheduling = @import("scheduling.zig");
+pub const process = @import("process.zig");
 pub const arch = @import("arch.zig");
 pub const platform = arch.platform;
 pub const KernelArgs = arch.common.KernelArgs;
 pub const debugging = @import("debugging.zig");
 pub const logging = @import("logging.zig");
 pub const misc = @import("misc.zig");
+const std = @import("std");
 const initPageAllocator = arch.page_allocation.initPageAllocator;
 const page_allocator = arch.page_allocation.page_allocator_ptr;
 const heap_allocator = heap.heap_allocator_ptr;
@@ -125,77 +126,87 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     const test_program_path = "bin/sys/test_program";
     const test_program = cpio.cpioFindFile(initrd, test_program_path)
         orelse @panic("test program not found");
-    const program_elf = (elf.Elf.init(test_program)
-        catch @panic("couldn't parse test program elf")).Bit64;
-    // Create virtual memory mapper for process
-    var mem_mapper = arch.virtual_page_mapping.VirtualPageMapper.init(page_allocator) catch {
-        @panic("out of memory");
+    // const program_elf = (elf.Elf.init(test_program) catch |err| {
+    //     logger.emerg("Failure - {}", .{err});
+    //     @panic("couldn't parse test program elf");
+    // }).Bit64;
+    // // Create virtual memory mapper for process
+    // var mem_mapper = arch.virtual_page_mapping.VirtualPageMapper.init(page_allocator) catch {
+    //     @panic("out of memory");
+    // };
+    // // Load program segments into memory, mapping and setting flags
+    // for (program_elf.program_header) |*entry| {
+    //     if (entry.type != .Loadable) continue;
+    //     // Get segment in program file
+    //     const segment_slice = @ptrCast(
+    //         [*]const u8,
+    //         &program_elf.file[entry.segment_offset],
+    //     )[0..entry.segment_image_size];
+    //     // Map segment to process memory
+    //     mem_mapper.mapMemCopyFromBuffer(
+    //         entry.segment_virt_addr,
+    //         entry.segment_memory_size,
+    //         segment_slice,
+    //     ) catch @panic("out of memory");
+    //     // Set flags for segment
+    //     mem_mapper.changeFlagsRelaxing(
+    //         entry.segment_virt_addr,
+    //         arch.paging.PageTableEntry.generateU64(.{
+    //             .present = true,
+    //             .writable = entry.flags & 2 == 2,
+    //             .no_execute = entry.flags & 1 == 0,
+    //             .user_accessable = true,
+    //         }),
+    //         entry.segment_memory_size,
+    //     );
+    // }
+    // const entry_pos = program_elf.header.prog_entry_pos;
+    const tls_ptr = arch.tls.getThreadLocalVariables();
+    // {
+    //     var test_program_process = process.Process{
+    //         .process_type = .User,
+    //         .page_mapper = mem_mapper,
+    //     };
+    //     test_program_process.registers.rip = entry_pos;
+    //     tls_ptr.current_process = test_program_process;
+    // }
+    var test_process_1 = process.Process.initUserProcessFromElfFile(test_program) catch |err| {
+        logger.emerg("Failed to initalise process - {}", .{err});
+        @panic("process init failed");
     };
-    // TODO Add in validation of addresses and lengths
-    // Load program segments into memory, mapping and setting flags
-    for (program_elf.program_header) |*entry| {
-        if (entry.type != .Loadable) continue;
-        // Get segment in program file
-        const segment_slice = @ptrCast(
-            [*]const u8,
-            &program_elf.file[entry.segment_offset],
-        )[0..entry.segment_image_size];
-        // Map segment to process memory
-        mem_mapper.mapMemCopyFromBuffer(
-            entry.segment_virt_addr,
-            entry.segment_memory_size,
-            segment_slice,
-        ) catch @panic("out of memory");
-        // Set flags for segment
-        mem_mapper.changeFlags(
-            entry.segment_virt_addr,
-            arch.paging.PageTableEntry.generateU64(.{
-                .present = true,
-                .writable = entry.flags & 2 == 2,
-                .no_execute = entry.flags & 1 == 0,
-                .user_accessable = true,
-            }),
-            entry.segment_memory_size,
-        );
+    var test_process_2 = process.Process.initUserProcessFromElfFile(test_program) catch |err| {
+        logger.emerg("Failed to initalise process - {}", .{err});
+        @panic("process init failed");
+    };
+    std.mem.doNotOptimizeAway(&tls_ptr.kernel_main_process);
+    while (true) {
+        tls_ptr.current_process = test_process_1;
+        arch.task.returnToUserProcessFromSyscall(&tls_ptr.current_process);
+        switch (tls_ptr.yield_info.reason) {
+            .SystemCallRequest => arch.syscall.handleSystemCall(),
+            .YieldSystemCall => {},
+            else => {
+                logger.debug("Unknown yield reason: {}", .{tls_ptr.yield_info.reason});
+                @panic("unknown yield reason");
+            },
+        }
+        test_process_1 = tls_ptr.current_process;
+        tls_ptr.current_process = test_process_2;
+        arch.task.returnToUserProcessFromSyscall(&tls_ptr.current_process);
+        switch (tls_ptr.yield_info.reason) {
+            .SystemCallRequest => arch.syscall.handleSystemCall(),
+            .YieldSystemCall => {},
+            else => {
+                logger.debug("Unknown yield reason: {}", .{tls_ptr.yield_info.reason});
+                @panic("unknown yield reason");
+            },
+        }
+        test_process_2 = tls_ptr.current_process;
     }
-    const entry_pos = program_elf.header.prog_entry_pos;
-    logger.debug("Mapped test program, switching address spaces...", .{});
-    asm volatile ("movq %%rax, %%cr3"
-        :
-        : [page_table] "{rax}" (mem_mapper.page_table.getAddress())
-        : "memory"
-    );
-    logger.debug("Address spaces switched!", .{});
-    arch.interrupts.kernel_idt.load();
-    logger.debug("Running test program...", .{});
-    asm volatile ("xchgw %%bx, %%bx");
-    asm volatile ("sysretq"
-        :
-        : [rip] "{rcx}" (entry_pos),
-          [flags] "{r11}" (@as(u64, 2))
-    );
-    // TODO IT WORKS!! Now to sort out basic system calls for more testing
     logger.debug("KERNEL END", .{});
     while (true) {
         asm volatile ("hlt");
     }
 }
 
-export fn debugFromC(message_ptr: [*]const u8, message_len: usize) void {
-    logging.logString(.debug, .C, "", message_ptr[0..message_len]);
-}
-
 extern fn syscallEntrypoint() callconv(.Naked) void;
-
-const PrintMessageTaskArgs = struct {
-    message: []const u8,
-};
-
-fn printMessageTaskFunc(args: *PrintMessageTaskArgs) void {
-    logging.logString(.info, .print_message_task, "", args.message);
-    // logging.log(.info, .print_message_task, "{s}", .{args.message});
-}
-
-fn testTaskFunction(_args: *scheduling.VoidType) void {
-    logger.info("Hello world!", .{});
-}

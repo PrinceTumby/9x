@@ -75,8 +75,7 @@ init64:
     movw %ax, %gs
 
     // -- Load new page table --
-    // Page table pointer location in args must be kept in sync with struct definition
-    movq 16(%rdi), %rax
+    movq KernelArgs.page_table_ptr(%rdi), %rax
     movq %rax, %cr3
 
     // -- Control register initialisation --
@@ -86,10 +85,11 @@ init64:
     // Initialise CR4
     movq $0x402A0, %rax
     movq %rax, %cr4
-    // Enable NX and SYSCALL in EFER
+    // Modify EFER - enable NX and SYSCALL, disable Fast FXSAVE/FXRSTOR
     movl $0xC0000080, %ecx
     rdmsr
     orl $0x801, %eax
+    andl $0xFFFFBFFF, %eax
     wrmsr
     // Initialise PAT
     movl $0x277, %ecx

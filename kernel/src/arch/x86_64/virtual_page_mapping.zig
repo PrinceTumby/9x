@@ -32,20 +32,30 @@ pub const VirtualPageMapper = struct {
 
     pub fn deinit(self: *VirtualPageMapper) void {
         const node = @intToPtr(*[512]PageTableEntry, self.page_table.getAddress());
-        self.freePageTree(node, 0);
+        for (node[0..256]) |entry| {
+            if (entry.isPresent()) self.freePageTree(entry, 0);
+        }
+        self.page_allocator.freePage(self.page_table.getAddress());
     }
 
     /// Maps `(size / 4096) + 1` free pages to virtual memory at start address. Fills pages with
-    /// data from provided buffer. Memory past buffer length is zeroed. Child entries and
-    /// generated parent entries are set to be readable and writable. Flags for already existing
-    /// parent pages are preserved.
+    /// data from provided buffer. Memory past buffer length is zeroed. Generated hild entries are
+    /// set to be only readable, generated parent entries are set to be readable writable, and
+    /// executable. Flags for already existing parent pages are preserved.
     pub fn mapMemCopyFromBuffer(
         self: *VirtualPageMapper,
         virtual_start_address: u64,
         size: u64,
         buffer: []const u8,
     ) !void {
-        const flags = 0x3; // Present and writable
+        const parent_flags = PageTableEntry.generateU64(.{
+            .present = true,
+            .writable = true,
+        });
+        const flags = PageTableEntry.generateU64(.{
+            .present = true,
+            .no_execute = true,
+        });
         const level_masks = [_]u64{
             0xFF80_0000_0000,
             0x007F_C000_0000,
@@ -81,7 +91,7 @@ pub const VirtualPageMapper = struct {
                         }
                         // Set entry to new page table
                         const stripped_address = @ptrToInt(new_address) & 0x000FFFFFFFFFF000;
-                        const new_entry: u64 = stripped_address | flags;
+                        const new_entry: u64 = stripped_address | parent_flags;
                         current_table_ptr[index] = new_entry;
                         entry = PageTableEntry.fromU64(new_entry);
                         asm volatile ("invlpg (%[page])"
@@ -92,28 +102,35 @@ pub const VirtualPageMapper = struct {
                     } else {
                         // Allocate new page
                         const new_page = try self.page_allocator.findAndReservePage();
-                        // Write buffer data to page
-                        const data_to_write =
-                            std.math.min(buffer.len - data_written, 4096 - start_offset);
-                        const buffer_slice = buffer[data_written..];
-                        for (new_page[start_offset..][0..data_to_write]) |*byte, byte_i| {
-                            byte.* = buffer_slice[byte_i];
-                        }
-                        // Zero out rest of page
-                        for (new_page[start_offset + data_to_write..]) |*byte| byte.* = 0;
-                        // Record amount of data written, reset offset
-                        data_written += data_to_write;
-                        start_offset = 0;
                         // Map new page
                         const stripped_address = @ptrToInt(new_page) & 0x000FFFFFFFFFF000;
                         const new_entry: u64 = stripped_address | flags;
                         current_table_ptr[index] = new_entry;
+                        entry = PageTableEntry.fromU64(new_entry);
                         asm volatile ("invlpg (%[page])"
                             :
                             : [page] "r" (virtual_address)
                             : "memory"
                         );
                     }
+                }
+                if (i == 3) {
+                    // Write buffer data to page
+                    const data_to_write =
+                        std.math.min(buffer.len - data_written, 4096 - start_offset);
+                    const buffer_slice = buffer[data_written..];
+                    const write_page = @intToPtr(
+                        *allowzero align(4096) [4096]u8,
+                        entry.getAddress(),
+                    );
+                    for (write_page[start_offset..][0..data_to_write]) |*byte, byte_i| {
+                        byte.* = buffer_slice[byte_i];
+                    }
+                    // Zero out rest of page
+                    for (write_page[start_offset + data_to_write..]) |*byte| byte.* = 0;
+                    // Record amount of data written, reset offset
+                    data_written += data_to_write;
+                    start_offset = 0;
                 }
                 current_address = entry.getAddress();
             }
@@ -216,6 +233,11 @@ pub const VirtualPageMapper = struct {
         const actual_start_address = start_address & 0x000FFFFFFFFFF000;
         const actual_flags = (flags & 0x80000000000001FE) | 0x1;
         const parent_relaxation_flags = (flags & 0x6) | 0x1;
+        const parent_no_execute_mask: u64 =
+            if (flags & (1 << 63) == 0)
+                ~@as(u64, 1 << 63)
+            else
+                ~@as(u64, 0);
         const level_masks = [_]u64{
             0xFF80_0000_0000,
             0x007F_C000_0000,
@@ -235,16 +257,27 @@ pub const VirtualPageMapper = struct {
                     (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
                 );
                 var entry = current_table[index];
-                // Allocate page if required
                 if (!entry.isPresent()) {
                     continue :outer;
                 }
                 if (i < 3) {
+                    // TODO Test this
+                    // TODO Optimize, skip over next pages in huge page
                     if (entry.isHugePage()) {
-                        // TODO Implement huge page support
-                        @panic("huge page support currently unimplemented");
+                        const stripped_address = entry.getAddress() & 0x000FFFFFFFFFF000;
+                        const huge_page_flag = PageTableEntry.generateU64(.{
+                            .huge_page = true,
+                        });
+                        const new_entry = stripped_address | actual_flags | huge_page_flag;
+                        current_table_ptr[index] = new_entry;
+                        asm volatile ("invlpg (%[page])"
+                            :
+                            : [page] "r" (virtual_address)
+                            : "memory"
+                        );
+                        continue :outer;
                     }
-                    const new_entry = entry.__data | parent_relaxation_flags;
+                    const new_entry = (entry.__data | parent_relaxation_flags) & no_execute_mask;
                     current_table_ptr[index] = new_entry;
                     asm volatile ("invlpg (%[page])"
                         :
@@ -265,16 +298,82 @@ pub const VirtualPageMapper = struct {
         }
     }
 
-    // TODO Add support for large pages (depends on page allocator large page support)
-    fn freePageTree(self: *VirtualPageMapper, node: *[512]PageTableEntry, level: usize) void {
-        for (node) |*entry| {
-            if (entry.isPresent()) {
-                if (level < 3) {
-                    freePageTree(entry, level + 1);
-                    self.page_allocator.freePage(@ptrToInt(entry)) catch {};
+    // TODO Optimize by keeping count of number of pages done, stay at deepest level
+    // TODO Make this relax parent NX flag
+    /// Relaxes the flags of `(size / 4096) + 1` child pages starting at the given linear address.
+    /// Also relaxes permissions for parent pages where necessary.
+    pub fn changeFlagsRelaxing(
+        self: *VirtualPageMapper,
+        start_address: u64,
+        flags: u64,
+        size: u64,
+    ) void {
+        const actual_start_address = start_address & 0x000FFFFFFFFFF000;
+        const relaxation_flags = (flags & 0x6) | 0x1;
+        const no_execute_mask: u64 =
+            if (flags & (1 << 63) == 0)
+                ~@as(u64, 1 << 63)
+            else
+                ~@as(u64, 0);
+        const level_masks = [_]u64{
+            0xFF80_0000_0000,
+            0x007F_C000_0000,
+            0x0000_3FE0_0000,
+            0x0000_001F_F000,
+        };
+        const num_pages = if (size & 0xFFF != 0) (size >> 12) + 1 else size >> 12;
+        var page_i: usize = 0;
+        outer: while (page_i < num_pages) : (page_i += 1) {
+            const virtual_address = actual_start_address + (page_i << 12);
+            var current_address = self.page_table.getAddress();
+            for (level_masks) |level_mask, i| {
+                const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
+                const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
+                const index = @truncate(
+                    u9,
+                    (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
+                );
+                var entry = current_table[index];
+                if (!entry.isPresent()) {
+                    continue :outer;
                 }
+                // TODO Test this
+                // TODO Optimize, skip over next pages in huge page
+                if (entry.isHugePage()) {
+                    const stripped_address = entry.getAddress() & 0x000FFFFFFFFFF000;
+                    const huge_page_flag = PageTableEntry.generateU64(.{
+                        .huge_page = true,
+                    });
+                    const new_entry = (entry.__data | relaxation_flags) & no_execute_mask;
+                    current_table_ptr[index] = new_entry;
+                    asm volatile ("invlpg (%[page])"
+                        :
+                        : [page] "r" (virtual_address)
+                        : "memory"
+                    );
+                    continue :outer;
+                }
+                const new_entry = (entry.__data | relaxation_flags) & no_execute_mask;
+                current_table_ptr[index] = new_entry;
+                asm volatile ("invlpg (%[page])"
+                    :
+                    : [page] "r" (virtual_address)
+                    : "memory"
+                );
+                current_address = entry.getAddress();
             }
         }
-        self.page_allocator.freePage(@ptrToInt(node));
+    }
+
+    fn freePageTree(self: *VirtualPageMapper, node: PageTableEntry, level: usize) void {
+        if (!node.isPresent()) return;
+        // TODO Add huge page support
+        if (node.isHugePage()) @panic("huge page support unimplemented");
+        if (level < 3) {
+            for (@intToPtr(*[512]PageTableEntry, node.getAddress())) |entry| {
+                if (entry.isPresent()) self.freePageTree(entry, level + 1);
+            }
+        }
+        self.page_allocator.freePage(node.getAddress());
     }
 };
