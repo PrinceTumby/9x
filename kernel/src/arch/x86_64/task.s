@@ -201,3 +201,112 @@ taskSwitchKernelMainToUserIret:
     movq (%rax), %rax
     iretq
 .size taskSwitchKernelMainToUserIret, . - taskSwitchKernelMainToUserIret
+
+.global timerContextSwitchHandler
+.type timerContextSwitchHandler, @function
+timerContextSwitchHandler:
+    // Make sure interrupts are disabled, so we don't have issues with the stack being overwritten
+    cli
+    // Return to code if interrupt happened in kernel mode
+    cmpq $GDT.kernel_code, 8(%rsp)
+    jne 0f
+    iretq
+0:
+    // Swap GS to contain pointer to kernel thread local storage
+    swapgs
+    // Write yield reason
+    movq $YieldInfo.Reason.Timeout, %gs:ThreadLocalVariables.yield_info.reason
+    // Save RAX
+    movq %rax, %gs:ThreadLocalVariables.current_process.registers.rax
+    // Save vector state, get pointer to register storage
+    movq %gs:ThreadLocalVariables.self_pointer, %rax
+    leaq ThreadLocalVariables.current_process.registers.vector_store(%rax), %rax
+    fxsave64 (%rax)
+    movq %gs:ThreadLocalVariables.self_pointer, %rax
+    leaq ThreadLocalVariables.current_process.registers.rax(%rax), %rax
+    addq $8, %rax
+    // Save registers
+    movq %rbx, (%rax)
+    addq $8, %rax
+    movq %rcx, (%rax)
+    addq $8, %rax
+    movq %rdx, (%rax)
+    addq $8, %rax
+    movq %rsi, (%rax)
+    addq $8, %rax
+    movq %rdi, (%rax)
+    addq $8, %rax
+    movq %rbp, (%rax)
+    addq $8, %rax
+    movq 24(%rsp), %rbx // RSP
+    movq %rbx, (%rax)
+    addq $8, %rax
+    movq %r8, (%rax)
+    addq $8, %rax
+    movq %r9, (%rax)
+    addq $8, %rax
+    movq %r10, (%rax)
+    addq $8, %rax
+    movq %r11, (%rax)
+    addq $8, %rax
+    movq %r12, (%rax)
+    addq $8, %rax
+    movq %r13, (%rax)
+    addq $8, %rax
+    movq %r14, (%rax)
+    addq $8, %rax
+    movq %r15, (%rax)
+    addq $8, %rax
+    movq (%rsp), %rbx // RIP
+    movq %rbx, (%rax)
+    addq $8, %rax
+    movq 16(%rsp), %rbx // RFLAGS
+    movq %rbx, (%rax)
+    addq $8, %rax
+    movl $0xC0000100, %ecx // FS
+    movq %rax, %rbx
+    rdmsr
+    shlq $32, %rdx
+    orq %rax, %rdx
+    movq %rdx, (%rbx)
+    addq $8, %rbx
+    movl $0xC0000102, %ecx // GS
+    rdmsr
+    shlq $32, %rdx
+    orq %rax, %rdx
+    movq %rdx, (%rbx)
+    // Load main kernel process registers, jump to address
+    movq %gs:ThreadLocalVariables.self_pointer, %rax
+    leaq ThreadLocalVariables.kernel_main_process.registers.vector_store(%rax), %rbx
+    fxrstor64 (%rbx) // Vector state
+    leaq ThreadLocalVariables.kernel_main_process.registers.fs(%rax), %rbx
+    movl $0xC0000100, %ecx // FS
+    movl (%rbx), %eax
+    movl 4(%rbx), %edx
+    wrmsr
+    movq %rbx, %rax
+    subq $16, %rax
+    movq (%rax), %r15
+    subq $8, %rax
+    movq (%rax), %r14
+    subq $8, %rax
+    movq (%rax), %r13
+    subq $8, %rax
+    movq (%rax), %r12
+    subq $8, %rax
+    movq (%rax), %r9
+    subq $8, %rax
+    movq (%rax), %r8
+    subq $8, %rax
+    movq (%rax), %rsp
+    subq $8, %rax
+    movq (%rax), %rbp
+    subq $8, %rax
+    movq (%rax), %rdx
+    subq $8, %rax
+    movq (%rax), %rcx
+    subq $8, %rax
+    movq (%rax), %rbx
+    movq 88(%rax), %rax // RIP
+    jmpq *%rax
+.size timerContextSwitchHandler, . - timerContextSwitchHandler

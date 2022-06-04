@@ -27,7 +27,7 @@ pub const process_list = struct {
     pub fn push(priority: u8, process: *Process) void {
         const lock = process_list_lock.acquire();
         defer lock.release();
-        const priority_ptr = &pending_tasks[priority];
+        const priority_ptr = &pending_processes[priority];
         process.previous_process = priority_ptr.tail;
         if (priority_ptr.tail) |tail| {
             tail.next_process = process;
@@ -138,6 +138,10 @@ pub const Process = struct {
 pub const KernelMainProcess = struct {
     registers: KernelMainRegisterStore = .{},
     page_allocator_ptr: *PageAllocator = arch.page_allocation.page_allocator_ptr,
+
+    pub fn loadAddressSpace(self: *const KernelMainProcess) void {
+        self.page_allocator_ptr.loadAddressSpace();
+    }
 
     comptime {
         @setEvalBranchQuota(5000);

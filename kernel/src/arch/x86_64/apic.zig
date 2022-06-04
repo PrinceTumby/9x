@@ -154,12 +154,14 @@ pub const LocalApic = struct {
         }
     };
 
+    extern var LOCAL_APIC_BASE: u8;
+
     pub fn init(base_address: usize) LocalApic {
-        if (!page_allocator.isAddressIdentityMapped(base_address)) {
-            page_allocator.offsetMapMem(base_address, base_address, 0x3, 0x1000)
-                catch @panic("out of memory");
-        }
-        return LocalApic{ .base_address = base_address };
+        const local_apic_address = @ptrToInt(&LOCAL_APIC_BASE);
+        // Map local APIC in higher half so can be accessed when process address spaces are used
+        page_allocator.offsetMapMem(base_address, local_apic_address, 0x3, 0x1000)
+            catch @panic("out of memory");
+        return LocalApic{ .base_address = local_apic_address };
     }
 
     pub inline fn readRegister(self: *const LocalApic, comptime register: Register) u32 {

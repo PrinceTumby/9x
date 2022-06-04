@@ -55,6 +55,13 @@ pub var counters = struct {
 
 pub var calibrationSleep: fn(startTimer: fn() void) u32 = dummyCalibrationSleep;
 
+pub const InterruptType = enum {
+    Sleep,
+    ContextSwitch,
+};
+
+pub var setInterruptType: fn(interrupt_type: InterruptType) void = dummySetInterruptType;
+
 pub var sleepMs: fn(time_in_ms: u32) void = dummySleepMs;
 
 pub var startCountdown: fn(time_in_ms: u32) void = dummyStartCountdown;
@@ -65,8 +72,14 @@ pub var getHasCountdownEnded: fn() bool = dummyGetHasCountdownEnded;
 
 pub var stopCountdown: fn() void = dummyStopCountdown;
 
+pub var acknowledgeCountdownInterrupt: fn() void = dummyAcknowledgeCountdownInterrupt;
+
 fn dummyCalibrationSleep(_: fn() void) u32 {
     @panic("no function for calibrationSleep available");
+}
+
+fn dummySetInterruptType(_: InterruptType) void {
+    @panic("no function for setInterruptType available");
 }
 
 fn dummySleepMs(_: u32) void {
@@ -87,6 +100,8 @@ fn dummyGetHasCountdownEnded() bool {
 
 fn dummyStopCountdown() void {}
 
+fn dummyAcknowledgeCountdownInterrupt() void {}
+
 pub fn updateClockFunctions() void {
     calibrationSleep = switch (selectClock(calibration_timers)) {
         .Rtc => rtc.calibrationSleep,
@@ -94,26 +109,27 @@ pub fn updateClockFunctions() void {
         .None => dummyCalibrationSleep,
         else => @panic("clock manager dev bug: calibration timer unhandled"),
     };
-    sleepMs = switch (selectClock(timers)) {
-        .Apic => apic_timer.sleepMs,
-        .None => dummySleepMs,
-        else => @panic("clock manager dev bug: timer unhandled for sleepMs"),
-    };
     // Update countdown functions
     switch (selectClock(timers)) {
         .Apic => {
+            setInterruptType = apic_timer.setInterruptType;
+            sleepMs = apic_timer.sleepMs;
             startCountdown = apic_timer.startCountdown;
             getCountdownRemainingTime = apic_timer.getCountdownRemainingTime;
             getHasCountdownEnded = apic_timer.getHasCountdownEnded;
             stopCountdown = apic_timer.stopCountdown;
+            acknowledgeCountdownInterrupt = apic_timer.acknowledgeCountdownInterrupt;
         },
         .None => {
+            setInterruptType = dummySetInterruptType;
+            sleepMs = dummySleepMs;
             startCountdown = dummyStartCountdown;
             getCountdownRemainingTime = dummyGetCountdownRemainingTime;
             getHasCountdownEnded = dummyGetHasCountdownEnded;
             stopCountdown = dummyStopCountdown;
+            acknowledgeCountdownInterrupt = dummyAcknowledgeCountdownInterrupt;
         },
-        else => @panic("clock manager dev bug: timer unhandled for countdown funcs"),
+        else => @panic("clock manager bug: timer funcs unhandled"),
     }
 }
 

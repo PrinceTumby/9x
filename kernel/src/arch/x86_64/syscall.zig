@@ -5,6 +5,8 @@ const asmSymbolFmt = root.zig_extensions.asmSymbolFmt;
 
 const logger = std.log.scoped(.x86_64_syscall);
 
+pub extern fn syscallEntrypoint() callconv(.Naked) void;
+
 pub const SystemCall = enum(u64) {
     Debug,
     _,
@@ -27,6 +29,6 @@ pub fn handleSystemCall() void {
             logger.debug("{s}", .{message_ptr[0..message_len]});
             process_registers.rax = 0;
         },
-        else => {},
+        else => @panic("kernel bug: unknown zig system call"),
     }
 }

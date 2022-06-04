@@ -17,6 +17,7 @@ pub const ThreadLocalVariables = struct {
     local_apic: LocalApicTls = .{},
     event_interrupt_handler: EventInterruptHandler = .{},
     current_process: Process = undefined,
+    current_process_heap_ptr: *Process = undefined,
     kernel_main_process: KernelMainProcess = .{},
     yield_info: YieldInfo = .{},
 
@@ -25,6 +26,7 @@ pub const ThreadLocalVariables = struct {
 
     pub const LocalApicTls = struct {
         apic: LocalApic = undefined,
+        interrupt_idt_index: usize = undefined,
         timer_ms_numerator: usize = 1,
         timer_ms_denominator: usize = 1,
         interrupt_received: bool = false,
@@ -36,14 +38,14 @@ pub const ThreadLocalVariables = struct {
     };
 
     pub const YieldInfo = extern struct {
-        reason: Reason = .Time,
+        reason: Reason = .Timeout,
         // Only used if an exception ocurred
         exception_type: ExceptionType = undefined,
         error_code: u64 = 0,
         page_fault_address: u64 = 0,
 
         pub const Reason = enum(u64) {
-            Time,
+            Timeout,
             YieldSystemCall,
             SystemCallRequest,
             ExitRequest,
@@ -108,6 +110,12 @@ pub const ThreadLocalVariables = struct {
             @byteOffsetOf(ThreadLocalVariables, "current_process") +
             @byteOffsetOf(Process, "page_mapper") +
             @byteOffsetOf(VirtualPageMapper, "page_table"),
+        ));
+        asm(asmSymbolFmt(
+            "ThreadLocalVariables.current_process.registers.vector_store",
+            @byteOffsetOf(ThreadLocalVariables, "current_process") +
+            @byteOffsetOf(Process, "registers") +
+            @byteOffsetOf(RegisterStore, "fxsave_area"),
         ));
         asm(asmSymbolFmt(
             "ThreadLocalVariables.kernel_main_process.registers.rbx",

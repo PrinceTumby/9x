@@ -17,7 +17,6 @@ syscall_table_len = (. - syscall_table) / 8
 .global syscallEntrypoint
 .type syscallEntrypoint, @function
 syscallEntrypoint:
-    xchgw %bx, %bx
     // Branch if syscall number is too large
     cmpq $syscall_table_len, %rax
     jge 0f
@@ -32,7 +31,10 @@ syscallEntrypoint:
 
 .type syscallSemiKernel, @function
 syscallSemiKernelBody:
-    // Get pointer to register storage
+    // Save vector state, get pointer to register storage
+    movq %gs:ThreadLocalVariables.self_pointer, %rax
+    leaq ThreadLocalVariables.current_process.registers.vector_store(%rax), %rax
+    fxsave64 (%rax)
     movq %gs:ThreadLocalVariables.self_pointer, %rax
     leaq ThreadLocalVariables.current_process.registers.rax(%rax), %rax
     addq $8, %rax

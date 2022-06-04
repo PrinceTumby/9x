@@ -12,20 +12,17 @@ message_len = . - message_ptr
 .global _start
 .type _start, @function
 _start:
+    movq %rax, %rbx
     // Get PID, change message ID character
     movq $0, %rax
     syscall
     addq $48, %rax
     movb %al, message_pid_char
+    movq %rbx, %rax
+    loop:
+    movq $1, %rax
     leaq message_ptr, %rdi
     movq $message_len, %rsi
-    movq $1, %rax
-    syscall
-    movq $1, %rax
-    syscall
-    // Infinitely yield in loop
-    loop:
-    movq $2, %rax
     syscall
     jmp loop
 

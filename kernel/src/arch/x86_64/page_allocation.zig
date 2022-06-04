@@ -424,4 +424,13 @@ pub const PageAllocator = struct {
         }
         return true;
     }
+
+    /// Switches to the page allocator's page table
+    pub fn loadAddressSpace(self: *const PageAllocator) void {
+        asm volatile (
+            "movq %[page_table], %%cr3"
+            :
+            : [page_table] "{rax}" (self.page_table.__data)
+        );
+    }
 };

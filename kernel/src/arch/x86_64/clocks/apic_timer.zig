@@ -1,5 +1,6 @@
 const clock_manager = @import("../clock_manager.zig");
 const tls = @import("../tls.zig");
+const task = @import("../task.zig");
 const interrupts = @import("../interrupts.zig");
 const LocalApic = @import("../apic.zig").LocalApic;
 const idt = @import("../idt.zig");
@@ -73,15 +74,12 @@ pub fn calibrate() void {
     local_apic_tls.timer_ms_denominator = time_slept / 1000;
 }
 
-pub fn map() !void {
-    const entry_index = try interrupts.apic.findAndReserveEntry();
+pub fn setup() !void {
     const local_apic = tls.getThreadLocalVariable("local_apic").apic;
+    const entry_index = try interrupts.apic.findAndReserveEntry();
+    tls.getThreadLocalVariables().local_apic.interrupt_idt_index = entry_index;
     // Enable APIC one-shot timer interrupts
     const LvtTimerRegister = LocalApic.registers.LvtTimerRegister;
-    interrupts.setGenericStackHandler(
-        &interrupts.kernel_idt.apic_interrupts[entry_index],
-        sleepHandler,
-    );
     var timer_lvt = LocalApic.TimerLvt.fromU32(local_apic.readRegister(LvtTimerRegister));
     timer_lvt.interrupt_vector = 128 + @as(u8, entry_index);
     timer_lvt.mask = true;
@@ -91,6 +89,18 @@ pub fn map() !void {
     local_apic.writeRegister(LocalApic.registers.DivideConfigurationRegister, 0b011);
     local_apic.writeRegister(LocalApic.registers.InitialCountRegister, 0xFFFFFFFF);
     clock_manager.timers.apic = true;
+}
+
+pub fn setInterruptType(interrupt_type: clock_manager.InterruptType) void {
+    const entry_index = tls.getThreadLocalVariables().local_apic.interrupt_idt_index;
+    const interruptHandler = switch (interrupt_type) {
+        .Sleep => sleepHandler,
+        .ContextSwitch => task.timerContextSwitchHandler,
+    };
+    interrupts.setGenericStackHandler(
+        &interrupts.kernel_idt.apic_interrupts[entry_index],
+        interruptHandler,
+    );
 }
 
 /// Sleeps for the number of milliseconds requested.
@@ -160,4 +170,8 @@ pub fn stopCountdown() void {
     var timer_lvt = LocalApic.TimerLvt.fromU32(local_apic.readRegister(LvtTimerRegister));
     timer_lvt.mask = true;
     local_apic.writeRegister(LvtTimerRegister, LocalApic.TimerLvt.toU32(timer_lvt));
+}
+
+pub fn acknowledgeCountdownInterrupt() void {
+    tls.getThreadLocalVariables().local_apic.apic.signalEoi();
 }

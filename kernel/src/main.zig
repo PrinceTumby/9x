@@ -110,103 +110,57 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     else
         logger.debug("Framebuffer not initialised", .{});
     arch.stage2Init(args);
-    {
-        // Load IA32_STAR
-        const user_base: u64 = arch.gdt.offset.user_code_32;
-        const kernel_base: u64 = arch.gdt.offset.kernel_code;
-        arch.common.msr.write(arch.common.msr.IA32_STAR, user_base << 48 | kernel_base << 32);
-        // Load IA32_LSTAR
-        logger.debug("Loading IA32_LSTAR with 0x{x}", .{@ptrToInt(syscallEntrypoint)});
-        arch.common.msr.write(arch.common.msr.IA32_LSTAR, @ptrToInt(syscallEntrypoint));
-        // Load IA32_FMASK
-        arch.common.msr.write(arch.common.msr.IA32_FMASK, ~@as(u32, 0x2));
-        logger.debug("Set IA32_STAR, IA32_LSTAR and IA32_FMASK", .{});
-    }
     // Parse test program ELF
     const test_program_path = "bin/sys/test_program";
     const test_program = cpio.cpioFindFile(initrd, test_program_path)
         orelse @panic("test program not found");
-    // const program_elf = (elf.Elf.init(test_program) catch |err| {
-    //     logger.emerg("Failure - {}", .{err});
-    //     @panic("couldn't parse test program elf");
-    // }).Bit64;
-    // // Create virtual memory mapper for process
-    // var mem_mapper = arch.virtual_page_mapping.VirtualPageMapper.init(page_allocator) catch {
-    //     @panic("out of memory");
-    // };
-    // // Load program segments into memory, mapping and setting flags
-    // for (program_elf.program_header) |*entry| {
-    //     if (entry.type != .Loadable) continue;
-    //     // Get segment in program file
-    //     const segment_slice = @ptrCast(
-    //         [*]const u8,
-    //         &program_elf.file[entry.segment_offset],
-    //     )[0..entry.segment_image_size];
-    //     // Map segment to process memory
-    //     mem_mapper.mapMemCopyFromBuffer(
-    //         entry.segment_virt_addr,
-    //         entry.segment_memory_size,
-    //         segment_slice,
-    //     ) catch @panic("out of memory");
-    //     // Set flags for segment
-    //     mem_mapper.changeFlagsRelaxing(
-    //         entry.segment_virt_addr,
-    //         arch.paging.PageTableEntry.generateU64(.{
-    //             .present = true,
-    //             .writable = entry.flags & 2 == 2,
-    //             .no_execute = entry.flags & 1 == 0,
-    //             .user_accessable = true,
-    //         }),
-    //         entry.segment_memory_size,
-    //     );
-    // }
-    // const entry_pos = program_elf.header.prog_entry_pos;
     const tls_ptr = arch.tls.getThreadLocalVariables();
-    // {
-    //     var test_program_process = process.Process{
-    //         .process_type = .User,
-    //         .page_mapper = mem_mapper,
-    //     };
-    //     test_program_process.registers.rip = entry_pos;
-    //     tls_ptr.current_process = test_program_process;
-    // }
-    var test_process_1 = process.Process.initUserProcessFromElfFile(test_program) catch |err| {
-        logger.emerg("Failed to initalise process - {}", .{err});
-        @panic("process init failed");
-    };
-    var test_process_2 = process.Process.initUserProcessFromElfFile(test_program) catch |err| {
-        logger.emerg("Failed to initalise process - {}", .{err});
-        @panic("process init failed");
-    };
-    std.mem.doNotOptimizeAway(&tls_ptr.kernel_main_process);
+    arch.clock_manager.setInterruptType(.ContextSwitch);
+    // Create processes
+    {
+        const Process = process.Process;
+        var i: usize = 0;
+        while (i < 5) : (i += 1) {
+            var example_process = heap_allocator.create(Process) catch @panic("out of memory");
+            example_process.* = Process.initUserProcessFromElfFile(test_program) catch |err| {
+                logger.emerg("Failed to initalise process - {}", .{err});
+                @panic("process init failed");
+            };
+            process.process_list.push(127, example_process);
+        }
+    }
     while (true) {
-        tls_ptr.current_process = test_process_1;
-        arch.task.returnToUserProcessFromSyscall(&tls_ptr.current_process);
-        switch (tls_ptr.yield_info.reason) {
-            .SystemCallRequest => arch.syscall.handleSystemCall(),
-            .YieldSystemCall => {},
-            else => {
-                logger.debug("Unknown yield reason: {}", .{tls_ptr.yield_info.reason});
-                @panic("unknown yield reason");
-            },
+        const new_process = process.process_list.tryPop() orelse break;
+        tls_ptr.current_process = new_process.*;
+        tls_ptr.current_process_heap_ptr = new_process;
+        defer {
+            new_process.* = tls_ptr.current_process;
+            process.process_list.push(127, new_process);
         }
-        test_process_1 = tls_ptr.current_process;
-        tls_ptr.current_process = test_process_2;
-        arch.task.returnToUserProcessFromSyscall(&tls_ptr.current_process);
-        switch (tls_ptr.yield_info.reason) {
-            .SystemCallRequest => arch.syscall.handleSystemCall(),
-            .YieldSystemCall => {},
-            else => {
-                logger.debug("Unknown yield reason: {}", .{tls_ptr.yield_info.reason});
-                @panic("unknown yield reason");
-            },
+        arch.clock_manager.startCountdown(100);
+        arch.clock_manager.acknowledgeCountdownInterrupt();
+        while (true) {
+            arch.task.resumeUserProcess(&tls_ptr.current_process);
+            switch (tls_ptr.yield_info.reason) {
+                .Timeout => {
+                    arch.clock_manager.acknowledgeCountdownInterrupt();
+                    break;
+                },
+                .SystemCallRequest => arch.syscall.handleSystemCall(),
+                .YieldSystemCall => break,
+                else => {
+                    logger.debug("Unknown yield reason: {}", .{tls_ptr.yield_info.reason});
+                    @panic("unknown yield reason");
+                },
+            }
+            if (arch.clock_manager.getCountdownRemainingTime() == 0) {
+                tls_ptr.yield_info.reason = .Timeout;
+                break;
+            }
         }
-        test_process_2 = tls_ptr.current_process;
     }
     logger.debug("KERNEL END", .{});
     while (true) {
         asm volatile ("hlt");
     }
 }
-
-extern fn syscallEntrypoint() callconv(.Naked) void;

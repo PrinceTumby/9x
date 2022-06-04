@@ -61,6 +61,8 @@ pub fn stage1Init(_args: *KernelArgs) void {
 pub fn stage2Init(args: *KernelArgs) void {
     // Initialise TLS
     tls.initTls();
+    const tls_ptr = tls.getThreadLocalVariables();
+    std.mem.doNotOptimizeAway(&tls_ptr.kernel_main_process);
     // Initialise ACPICA
     if (args.arch.acpi_ptr) |acpi_ptr| {
         acpica.os_layer.rsdp_pointer = @ptrToInt(acpi_ptr);
@@ -81,8 +83,16 @@ pub fn stage2Init(args: *KernelArgs) void {
     }
     interrupts.apic.initFromMadt(madt);
     clock_manager.apic_timer.calibrate();
-    clock_manager.apic_timer.map() catch @panic("out of vectors");
+    clock_manager.apic_timer.setup() catch @panic("out of vectors");
     clock_manager.updateClockFunctions();
+    // Load IA32_*STAR registers for syscall support
+    {
+        const user_base: u64 = gdt.offset.user_code_32;
+        const kernel_base: u64 = gdt.offset.kernel_code;
+        common.msr.write(common.msr.IA32_STAR, user_base << 48 | kernel_base << 32);
+        common.msr.write(common.msr.IA32_LSTAR, @ptrToInt(syscall.syscallEntrypoint));
+        common.msr.write(common.msr.IA32_FMASK, ~@as(u32, 0x2));
+    }
     // const before_time: u64 = asm (
     //     \\cpuid
     //     \\rdtsc
