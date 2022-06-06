@@ -202,22 +202,8 @@ taskSwitchKernelMainToUserIret:
     iretq
 .size taskSwitchKernelMainToUserIret, . - taskSwitchKernelMainToUserIret
 
-.global timerContextSwitchHandler
-.type timerContextSwitchHandler, @function
-timerContextSwitchHandler:
-    // Make sure interrupts are disabled, so we don't have issues with the stack being overwritten
-    cli
-    // Return to code if interrupt happened in kernel mode
-    cmpq $GDT.kernel_code, 8(%rsp)
-    jne 0f
-    iretq
-0:
-    // Swap GS to contain pointer to kernel thread local storage
-    swapgs
-    // Write yield reason
-    movq $YieldInfo.Reason.Timeout, %gs:ThreadLocalVariables.yield_info.reason
-    // Save RAX
-    movq %rax, %gs:ThreadLocalVariables.current_process.registers.rax
+.type interruptContextSwitchBody, @function
+interruptContextSwitchBody:
     // Save vector state, get pointer to register storage
     movq %gs:ThreadLocalVariables.self_pointer, %rax
     leaq ThreadLocalVariables.current_process.registers.vector_store(%rax), %rax
@@ -309,4 +295,24 @@ timerContextSwitchHandler:
     movq (%rax), %rbx
     movq 88(%rax), %rax // RIP
     jmpq *%rax
+.size interruptContextSwitchBody, . - interruptContextSwitchBody
+
+.global timerContextSwitchHandler
+.type timerContextSwitchHandler, @function
+timerContextSwitchHandler:
+    // Make sure interrupts are disabled, so we don't have issues with the stack being overwritten
+    cli
+    // Return to code if interrupt happened in kernel mode
+    cmpq $GDT.kernel_code, 8(%rsp)
+    jne 0f
+    iretq
+0:
+    // Swap GS to contain pointer to kernel thread local storage
+    swapgs
+    // Write yield reason
+    movq $YieldInfo.Reason.Timeout, %gs:ThreadLocalVariables.yield_info.reason
+    // Save RAX
+    movq %rax, %gs:ThreadLocalVariables.current_process.registers.rax
+    // Jump to main interrupt context switch system
+    jmp interruptContextSwitchBody
 .size timerContextSwitchHandler, . - timerContextSwitchHandler

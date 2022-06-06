@@ -18,6 +18,7 @@ const std = @import("std");
 const initPageAllocator = arch.page_allocation.initPageAllocator;
 const page_allocator = arch.page_allocation.page_allocator_ptr;
 const heap_allocator = heap.heap_allocator_ptr;
+const Process = process.Process;
 
 const font_path = "etc/kernel/standard_font.psf";
 
@@ -114,15 +115,17 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     const test_program_path = "bin/sys/test_program";
     const test_program = cpio.cpioFindFile(initrd, test_program_path)
         orelse @panic("test program not found");
+    const test_zig_program_path = "bin/sys/test_zig_program";
+    const test_zig_program = cpio.cpioFindFile(initrd, test_zig_program_path)
+        orelse @panic("test zig program not found");
     const tls_ptr = arch.tls.getThreadLocalVariables();
     arch.clock_manager.setInterruptType(.ContextSwitch);
     // Create processes
     {
-        const Process = process.Process;
         var i: usize = 0;
-        while (i < 5) : (i += 1) {
+        while (i < 1) : (i += 1) {
             var example_process = heap_allocator.create(Process) catch @panic("out of memory");
-            example_process.* = Process.initUserProcessFromElfFile(test_program) catch |err| {
+            example_process.* = Process.initUserProcessFromElfFile(test_zig_program) catch |err| {
                 logger.emerg("Failed to initalise process - {}", .{err});
                 @panic("process init failed");
             };
@@ -140,6 +143,7 @@ export fn kernel_main(args: *KernelArgs) noreturn {
         arch.clock_manager.startCountdown(100);
         arch.clock_manager.acknowledgeCountdownInterrupt();
         while (true) {
+            asm volatile ("xchgw %%bx, %%bx");
             arch.task.resumeUserProcess(&tls_ptr.current_process);
             switch (tls_ptr.yield_info.reason) {
                 .Timeout => {

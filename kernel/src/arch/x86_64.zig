@@ -22,6 +22,10 @@ pub const task = @import("x86_64/task.zig");
 pub const tls = @import("x86_64/tls.zig");
 pub const virtual_page_mapping = @import("x86_64/virtual_page_mapping.zig");
 
+comptime {
+    _ = syscall;
+}
+
 // Other platform exports
 
 pub const build_options = @import("root").build_options.arch.x86_64;

@@ -19,6 +19,10 @@ pub const SystemCall = enum(u64) {
     }
 };
 
+comptime {
+    _ = SystemCall;
+}
+
 pub fn handleSystemCall() void {
     const tls_ptr = tls.getThreadLocalVariables();
     const process_registers = &tls_ptr.current_process.registers;
@@ -26,7 +30,7 @@ pub fn handleSystemCall() void {
         .Debug => {
             const message_ptr = @intToPtr([*]const u8, process_registers.rdi);
             const message_len = process_registers.rsi;
-            logger.debug("{s}", .{message_ptr[0..message_len]});
+            root.logging.logRaw("{s}", .{message_ptr[0..message_len]});
             process_registers.rax = 0;
         },
         else => @panic("kernel bug: unknown zig system call"),

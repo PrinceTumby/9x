@@ -194,6 +194,7 @@ pub const process = struct {
         pub fn init(register_overrides: RegisterOverrides) RegisterStore {
             return RegisterStore{
                 .rip = register_overrides.instruction_pointer,
+                .rbp = register_overrides.stack_pointer,
                 .rsp = register_overrides.stack_pointer,
             };
         }
@@ -220,7 +221,18 @@ pub const process = struct {
         pub const vector_store_offset = @byteOffsetOf(KernelMainRegisterStore, "fxsave_area");
     };
 
+    pub const highest_user_address: usize = 0x00007fffffffffff;
+
+    /// 4GiB stack size
+    pub const stack_size_limit: usize = 1 << 32;
+
+    pub const highest_program_segment_address: usize = highest_user_address - stack_size_limit;
+
     pub fn isUserAddressValid(address: usize) bool {
-        return address < 0x00007fffffffffff;
+        return address < highest_user_address;
+    }
+
+    pub fn isProgramSegmentAddressValid(address: usize) bool {
+        return address < highest_program_segment_address;
     }
 };

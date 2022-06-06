@@ -11,51 +11,64 @@ pub const PageTable = [512]PageTableEntry;
 pub const PageTableEntry = packed struct {
     __data: u64,
 
-    const Self = @This();
-
-    pub fn fromU64(entry: u64) Self {
+    pub fn fromU64(entry: u64) PageTableEntry {
         return PageTableEntry{ .__data = entry };
-        // return @ptrCast(*const Self, &entry).*;
     }
 
-    pub fn isPresent(self: Self) bool {
+    pub fn isPresent(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000001 != 0;
     }
 
-    pub fn isWritable(self: Self) bool {
+    pub fn isWritable(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000002 != 0;
     }
 
-    pub fn isUserAccessable(self: Self) bool {
+    pub fn isUserAccessable(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000004 != 0;
     }
 
-    pub fn writeThroughCachingEnabled(self: Self) bool {
+    pub fn writeThroughCachingEnabled(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000008 != 0;
     }
 
-    pub fn cacheDisabled(self: Self) bool {
+    pub fn cacheDisabled(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000010 != 0;
     }
 
-    pub fn isAccessed(self: Self) bool {
+    pub fn isAccessed(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000020 != 0;
     }
 
-    pub fn isDirty(self: Self) bool {
+    pub fn isDirty(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000040 != 0;
     }
 
-    pub fn isHugePage(self: Self) bool {
+    pub fn isHugePage(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000080 != 0;
     }
 
-    pub fn isGlobal(self: Self) bool {
+    pub fn isGlobal(self: PageTableEntry) bool {
         return self.__data & 0x0000000000000100 != 0;
     }
 
-    pub fn isNoExecute(self: Self) bool {
+    pub fn isNoExecute(self: PageTableEntry) bool {
         return self.__data & 0x8000000000000000 != 0;
+    }
+
+    pub fn getKernelData1(self: PageTableEntry) u3 {
+        return @truncate(u3, (self.__data & 0xE00) >> 9);
+    }
+
+    pub fn setKernelData1(self: *PageTableEntry, data: u3) void {
+        self.__data = (self.__data & ~@as(u64, 0xE00)) | (@as(u64, data) << 9);
+    }
+
+    pub fn getKernelData2(self: PageTableEntry) u7 {
+        return @truncate(u7, (self.__data & 0x7F0000000000000) >> 52);
+    }
+
+    pub fn setKernelData2(self: *PageTableEntry, data: u7) void {
+        self.__data = (self.__data & ~@as(u64, 0x7F0000000000000)) | (@as(u64, data) << 52);
     }
 
     pub const framebuffer_flags: u64 = 0x8000000000000083;
@@ -89,7 +102,7 @@ pub const PageTableEntry = packed struct {
             @as(u64, flags.physical_address & 0x000FFFFFFFFFF000);
     }
 
-    pub fn getAddress(self: Self) u64 {
+    pub fn getAddress(self: PageTableEntry) u64 {
         const addr = self.__data & 0x000FFFFFFFFFF000;
         if (addr & 0x0008000000000000 != 0) {
             return addr | 0xFFF0000000000000;

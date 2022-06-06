@@ -277,7 +277,8 @@ pub const VirtualPageMapper = struct {
                         );
                         continue :outer;
                     }
-                    const new_entry = (entry.__data | parent_relaxation_flags) & no_execute_mask;
+                    const new_entry =
+                        (entry.__data | parent_relaxation_flags) & parent_no_execute_mask;
                     current_table_ptr[index] = new_entry;
                     asm volatile ("invlpg (%[page])"
                         :

@@ -124,6 +124,11 @@ pub noinline fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace
     logging.logString(.emerg, .main, "KERNEL PANIC: ", message);
     // Print stack trace
     if (!disable_trace_logging) {
+        if (trace_maybe != null) {
+            logging.logRawLn("ZIG TRACE AVAILABLE", .{});
+        } else {
+            logging.logRawLn("ZIG TRACE UNAVAILABLE", .{});
+        }
         logging.logRawLn("STACK TRACE:", .{});
         printStackTrace(trace_maybe);
         logging.logRawLn("END OF TRACE", .{});

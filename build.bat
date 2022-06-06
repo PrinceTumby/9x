@@ -39,12 +39,21 @@ rmdir /s /q out 2>NUL
 mkdir out 2>NUL
 echo - Copying base initrd template files...
 xcopy /c /q /e /i initrd\template out\initrd 1>NUL
-echo - Compiling test program...
+echo - Compiling test programs...
 cd initrd\test_program
 cmd /k "zig build -Drelease-fast=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..\test_zig_program
+cmd /k "zig build -Drelease-fast=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
 cd ..\..
 echo - Building initrd...
 copy initrd\test_program\out\test_program out\initrd\bin\sys 1>NUL
+copy initrd\test_zig_program\out\test_zig_program out\initrd\bin\sys 1>NUL
 cd out\initrd
 tar -c --format cpio -f ..\initrd.cpio *
 cd ..
@@ -105,12 +114,21 @@ rmdir /s /q out 2>NUL
 mkdir out 2>NUL
 echo - Copying base initrd template files...
 xcopy /c /q /e /i initrd\template out\initrd 1>NUL
-echo - Compiling test program...
+echo - Compiling test programs...
 cd initrd\test_program
 cmd /k "zig build -Drelease-fast=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..\test_zig_program
+cmd /k "zig build -Drelease-fast=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
 cd ..\..
 echo - Building initrd...
 copy initrd\test_program\out\test_program out\initrd\bin\sys 1>NUL
+copy initrd\test_zig_program\out\test_zig_program out\initrd\bin\sys 1>NUL
 cd out\initrd
 tar -c --format cpio -f ..\initrd.cpio *
 cd ..
@@ -156,12 +174,21 @@ rmdir /s /q out 2>NUL
 mkdir out 2>NUL
 echo - Copying base initrd template files...
 xcopy /c /q /e /i initrd\template out\initrd 1>NUL
-echo - Compiling test program...
+echo - Compiling test programs...
 cd initrd\test_program
-cmd /k "zig build -Drelease-fast=true -Dtarget=x86_64-freestanding-gnu & exit"
+cmd /k "zig build -Drelease-safe=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..\test_zig_program
+cmd /k "zig build -Drelease-safe=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
 cd ..\..
 echo - Building initrd...
 copy initrd\test_program\out\test_program out\initrd\bin\sys 1>NUL
+copy initrd\test_zig_program\out\test_zig_program out\initrd\bin\sys 1>NUL
 cd out\initrd
 tar -c --format cpio -f ..\initrd.cpio *
 cd ..

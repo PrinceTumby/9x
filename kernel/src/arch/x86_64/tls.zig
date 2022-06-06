@@ -41,7 +41,7 @@ pub const ThreadLocalVariables = struct {
         reason: Reason = .Timeout,
         // Only used if an exception ocurred
         exception_type: ExceptionType = undefined,
-        error_code: u64 = 0,
+        exception_error_code: u64 = 0,
         page_fault_address: u64 = 0,
 
         pub const Reason = enum(u64) {
@@ -84,6 +84,13 @@ pub const ThreadLocalVariables = struct {
             VmmCommunication = 29,
             Security = 30,
             _,
+
+            comptime {
+                @setEvalBranchQuota(10000);
+                inline for (@typeInfo(ExceptionType).Enum.fields) |exception| {
+                    asm(asmSymbolFmt("ExceptionType." ++ exception.name, exception.value));
+                }
+            }
         };
     };
 
@@ -144,6 +151,16 @@ pub const ThreadLocalVariables = struct {
             "ThreadLocalVariables.yield_info.exception_type",
             @byteOffsetOf(ThreadLocalVariables, "yield_info") +
             @byteOffsetOf(YieldInfo, "exception_type"),
+        ));
+        asm(asmSymbolFmt(
+            "ThreadLocalVariables.yield_info.exception_error_code",
+            @byteOffsetOf(ThreadLocalVariables, "yield_info") +
+            @byteOffsetOf(YieldInfo, "exception_error_code"),
+        ));
+        asm(asmSymbolFmt(
+            "ThreadLocalVariables.yield_info.page_fault_address",
+            @byteOffsetOf(ThreadLocalVariables, "yield_info") +
+            @byteOffsetOf(YieldInfo, "page_fault_address"),
         ));
     }
 };

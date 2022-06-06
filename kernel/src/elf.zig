@@ -125,6 +125,7 @@ pub const Elf = union(enum) {
                 AuxiliaryInfo = 4,
                 ProgHeaderTable = 6,
                 ThreadLocalStorageTemplate = 7,
+                GnuStack = 0x6474E551,
                 _,
             };
 
@@ -187,7 +188,7 @@ pub const Elf = union(enum) {
                     entry.segment_virt_addr,
                     entry.segment_memory_size - 1,
                 );
-                if (!arch.common.process.isUserAddressValid(upper_bound))
+                if (!arch.common.process.isProgramSegmentAddressValid(upper_bound))
                     return error.SegmentLimitInvalid;
             }
             return Elf64{
