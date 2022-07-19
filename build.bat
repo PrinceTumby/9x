@@ -3,6 +3,9 @@ setlocal
 if "%1%"=="x86_64-efi" goto x64efi
 :: if "%1%"=="x86_64-grub" goto x64grub
 if "%1%"=="x86_64-limine" goto x64limine
+if "%1%"=="x86_64-limine-pxe" goto x64liminepxe
+if "%1%"=="arm-rpi" goto armrpi
+:: if "%1%"=="aarch64-rpi3" goto aarch64rpi3
 :: if "%1%"=="riscv64-qemu" goto riscv64qemu
 echo Usage: build [command]
 echo.
@@ -11,6 +14,9 @@ echo.
 echo   x86_64-efi           Build an x86_64 9x iso using the EFI loader
 :: echo   x86_64-grub          Build an x86_64 9x iso using the GRUB bootloader
 echo   x86_64-limine        Build an x86_64 9x iso using the Limine bootloader
+echo   x86_64-limine-pxe    Build an x86_64 PXE boot environment using the Limine bootloader
+echo   arm-rpi              Build an ARM kernel image for the Raspberry Pi
+:: echo   aarch64-rpi3         Build an AArch64 img for the Raspberry Pi 3
 :: echo   rv64-qemu            Build an RV64GC 9x iso as QEMU bios
 echo.
 if "%1%"=="" (
@@ -35,6 +41,7 @@ wsl objcopy --only-keep-debug kernel/out/kernel_unstripped dev/kernel.sym
 :: initrd building
 echo - Cleaning output directory...
 del 9x.iso 2>NUL
+del 9x.img 2>NUL
 rmdir /s /q out 2>NUL
 mkdir out 2>NUL
 echo - Copying base initrd template files...
@@ -110,6 +117,7 @@ wsl objcopy --only-keep-debug kernel/out/kernel_unstripped dev/kernel.sym
 :: initrd building
 echo - Cleaning output directory...
 del 9x.iso 2>NUL
+del 9x.img 2>NUL
 rmdir /s /q out 2>NUL
 mkdir out 2>NUL
 echo - Copying base initrd template files...
@@ -170,6 +178,7 @@ readelf -s -W kernel\out\kernel ^
 :: initrd building
 echo - Cleaning output directory...
 del 9x.iso 2>NUL
+del 9x.img 2>NUL
 rmdir /s /q out 2>NUL
 mkdir out 2>NUL
 echo - Copying base initrd template files...
@@ -215,6 +224,114 @@ limine-deploy 9x.iso
 if %errorlevel% NEQ 0 (
     goto :compfailed
 )
+echo Done!
+goto :end
+
+:: Limine bootloader PXE config
+:x64liminepxe
+echo Building:
+:: Kernel building
+echo - Compiling kernel...
+cd kernel
+cmd /k "zig build -Drelease-safe=true & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..
+wsl objcopy --only-keep-debug kernel/out/kernel_unstripped dev/kernel.sym
+readelf -s -W kernel\out\kernel ^
+    | wsl sed '1,4d' ^
+    | wsl awk '{print $2 " " $8}' ^
+    > dev\bochssyms.txt
+:: initrd building
+echo - Cleaning output directory...
+del 9x.iso 2>NUL
+del 9x.img 2>NUL
+rmdir /s /q out 2>NUL
+mkdir out 2>NUL
+echo - Copying base initrd template files...
+xcopy /c /q /e /i initrd\template out\initrd 1>NUL
+echo - Compiling test programs...
+cd initrd\test_program
+cmd /k "zig build -Drelease-safe=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..\test_zig_program
+cmd /k "zig build -Drelease-safe=true -Dtarget=x86_64-freestanding-gnu & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..\..
+echo - Building initrd...
+copy initrd\test_program\out\test_program out\initrd\bin\sys 1>NUL
+copy initrd\test_zig_program\out\test_zig_program out\initrd\bin\sys 1>NUL
+cd out\initrd
+tar -c --format cpio -f ..\initrd.cpio *
+cd ..
+:: PXE root building
+echo - Generating PXE root...
+mkdir pxeroot 2>NUL
+copy ..\misc\limine-pxe.cfg pxeroot\limine.cfg 1>NUL
+copy ..\misc\limine\limine.sys pxeroot 1>NUL
+copy ..\misc\limine\limine-pxe.bin pxeroot 1>NUL
+copy ..\kernel\out\kernel pxeroot 1>NUL
+copy initrd.cpio pxeroot 1>NUL
+cd ..
+echo Done!
+goto :end
+
+:: ARM Raspberry Pi config
+:armrpi
+echo Building:
+echo - Cleaning output directory...
+del 9x.iso 2>NUL
+del 9x.img 2>NUL
+rmdir /s /q out 2>NUL
+mkdir out 2>NUL
+:: Kernel building
+echo - Compiling kernel...
+cd kernel
+cmd /k "zig build -Drelease-safe=true -Dcpu-arch=arm -Dmachine-type=raspberry_pi & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..
+llvm-objcopy --only-keep-debug kernel\out\kernel_unstripped dev\kernel.sym
+llvm-objcopy kernel\out\kernel -O binary out\kernel.img
+:: Image root building
+echo - Building image...
+cd out
+mkdir imgroot 2>NUL
+mkdir imgroot\boot 2>NUL
+copy kernel.img imgroot\boot 1>NUL
+copy ..\misc\raspberry_pi\config.txt imgroot\boot 1>NUL
+copy ..\misc\raspberry_pi\firmware\bootcode.bin imgroot\boot 1>NUL
+copy ..\misc\raspberry_pi\firmware\fixup.dat imgroot\boot 1>NUL
+copy ..\misc\raspberry_pi\firmware\start.elf imgroot\boot 1>NUL
+wsl ~/.local/bin/genimage --config ../misc/raspberry_pi/genimage.cfg --root imgroot
+cd ..
+copy out\images\9x.img . 1>NUL
+echo Done!
+goto :end
+
+:: AArch64 Raspberry Pi 3 config
+:aarch64rpi3
+echo Building:
+echo - Cleaning output directory...
+del 9x.iso 2>NUL
+del 9x.img 2>NUL
+rmdir /s /q out 2>NUL
+mkdir out 2>NUL
+:: Kernel building
+echo - Compiling kernel...
+cd kernel
+cmd /k "zig build -Drelease-safe=true -Dcpu-arch=aarch64 -Dmachine-type=raspberry_pi & exit"
+if %errorlevel% NEQ 0 (
+    goto :compfailed
+)
+cd ..
+llvm-objcopy kernel\out\kernel -O binary out\kernel8.img
 echo Done!
 goto :end
 

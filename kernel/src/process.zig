@@ -5,21 +5,26 @@ const root = @import("root");
 const arch = @import("arch.zig");
 const elf = @import("elf.zig");
 const smp = @import("smp.zig");
+const resource = @import("resource.zig");
 const heap_allocator = root.heap.heap_allocator_ptr;
 const asmSymbolFmt = root.zig_extensions.asmSymbolFmt;
 const VirtualPageMapper = arch.virtual_page_mapping.VirtualPageMapper;
 const PageAllocator = arch.page_allocation.PageAllocator;
+const process_common = arch.common.process;
+const RegisterStore = process_common.RegisterStore;
+const KernelMainRegisterStore = process_common.KernelMainRegisterStore;
+const highest_user_address = process_common.highest_user_address;
+const isProgramSegmentAddressValid = process_common.isProgramSegmentAddressValid;
 const Elf = elf.Elf;
 const SpinLock = smp.SpinLock;
-const RegisterStore = arch.common.process.RegisterStore;
-const KernelMainRegisterStore = arch.common.process.KernelMainRegisterStore;
-const highest_program_segment_address = arch.common.process.highest_program_segment_address;
-const isProgramSegmentAddressValid = arch.common.process.isProgramSegmentAddressValid;
+const Resource = resource.Resource;
+
+const logger = std.log.scoped(.process);
 
 /// Pending processes, implemented as 256 priorities of doubly linked lists
 pub const process_list = struct {
     var process_list_lock: SpinLock = SpinLock.init();
-    var pending_processes = [1]Priority{.{.head = null, .tail = null}} ** 256;
+    var pending_processes = [1]Priority{.{ .head = null, .tail = null }} ** 256;
 
     const Priority = struct {
         head: ?*Process = null,
@@ -62,16 +67,130 @@ pub const Process = struct {
     next_process: ?*Process = null,
     process_type: Type,
     id: u64,
+    page_mapper: VirtualPageMapper,
+    registers: RegisterStore = .{},
     stack_lower_limit: u64,
     stack_upper_limit: u64,
+    program_break_lower_limit: u64,
+    program_break_upper_limit: u64,
+    program_break_location: u64,
     stack_flags: u64,
-    registers: RegisterStore = .{},
-    page_mapper: VirtualPageMapper,
+    resources: std.SegmentedList(*Resource, 0),
+    resource_map: ResourceMap = .{},
 
     pub const Type = enum {
-        Kernel,
+        // Kernel,
         User,
     };
+
+    pub const ResourceMap = struct {
+        entries: [128]Chain = [1]Chain{.{}} ** 128,
+
+        pub const Chain = struct {
+            length: usize = 0,
+            head: ?Node = null,
+
+            pub const Node = struct {
+                resource_ptr: *Resource,
+                next_ptr: ?*Node,
+            };
+        };
+    };
+
+    var process_id_counter: u64 = 0;
+
+    // TODO Add program arguments, environment variables
+    pub fn initUserProcessFromElfFile(elf_file: []const u8) !Process {
+        const program_elf = (try Elf.init(elf_file)).Bit64;
+        var mem_mapper = try VirtualPageMapper.init(arch.page_allocation.page_allocator_ptr);
+        errdefer mem_mapper.deinit();
+        var gnu_stack_entry: ?Elf.Elf64.ProgramHeaderEntry = null;
+        // Allocate segments, find program upper bound
+        var program_upper_bound: usize = 0;
+        for (program_elf.program_header) |*entry| {
+            switch (entry.type) {
+                .Loadable => {},
+                .GnuStack => {
+                    gnu_stack_entry = entry.*;
+                    continue;
+                },
+                else => continue,
+            }
+            // Get segment in program file
+            const segment_slice = @ptrCast(
+                [*]const u8,
+                &program_elf.file[entry.segment_offset],
+            )[0..entry.segment_image_size];
+            // Map segment to process memory
+            try mem_mapper.mapMemCopyFromBuffer(
+                entry.segment_virt_addr,
+                entry.segment_memory_size,
+                segment_slice,
+            );
+            // Update upper bound
+            const segment_upper_bound = entry.segment_virt_addr + entry.segment_memory_size - 1;
+            if (segment_upper_bound > program_upper_bound) {
+                program_upper_bound = segment_upper_bound;
+            }
+            // Set flags for segment
+            mem_mapper.changeFlagsRelaxing(
+                entry.segment_virt_addr,
+                arch.paging.PageTableEntry.generateU64(.{
+                    .present = true,
+                    .writable = entry.flags & 2 == 2,
+                    .no_execute = entry.flags & 1 == 0,
+                    .user_accessable = true,
+                }),
+                entry.segment_memory_size,
+            );
+        }
+        // Align program upper bound
+        program_upper_bound = std.mem.alignForward(program_upper_bound + 1, 16) - 1;
+        // TODO How does this even work? This puts a page at a non-canonical address surely?
+        // Allocate single page for stack, rest gets dynamically allocated on page fault
+        const stack_page_address = highest_user_address & ~@as(usize, 0xFFF);
+        const stack_writable = if (gnu_stack_entry) |entry| entry.flags & 2 == 2 else true;
+        const stack_no_execute = if (gnu_stack_entry) |entry| entry.flags & 1 == 0 else true;
+        const stack_flags = arch.paging.PageTableEntry.generateU64(.{
+            .present = true,
+            .writable = stack_writable,
+            .no_execute = stack_no_execute,
+            .user_accessable = true,
+        });
+        try mem_mapper.mapMemCopyFromBuffer(
+            stack_page_address,
+            0x1000,
+            &[0]u8{},
+        );
+        mem_mapper.changeFlags(stack_page_address, stack_flags, 0x1000);
+        // Generate ID, process structure
+        const pid = @atomicRmw(u64, &process_id_counter, .Add, 1, .Acquire);
+        return Process{
+            .id = pid,
+            // Default to having a 1MiB stack
+            .stack_lower_limit = std.math.max(
+                highest_user_address - 1_048_576 + 1,
+                program_upper_bound + 1,
+            ),
+            .stack_upper_limit = highest_user_address,
+            .program_break_lower_limit = program_upper_bound + 1,
+            .program_break_upper_limit = highest_user_address + 1,
+            .program_break_location = program_upper_bound + 1,
+            .stack_flags = stack_flags,
+            .registers = RegisterStore.init(.{
+                .stack_pointer = stack_page_address | 0xFF8,
+                .instruction_pointer = program_elf.header.prog_entry_pos,
+            }),
+            .process_type = .User,
+            .page_mapper = mem_mapper,
+            .resources = std.SegmentedList(*Resource, 0).init(heap_allocator),
+        };
+    }
+
+    pub fn deinit(self: *Process) void {
+        self.resources.deinit();
+        self.page_mapper.deinit();
+    }
 
     comptime {
         @setEvalBranchQuota(5000);
@@ -96,78 +215,6 @@ pub const Process = struct {
             @byteOffsetOf(Process, "page_mapper") +
             @byteOffsetOf(VirtualPageMapper, "page_table"),
         ));
-    }
-
-    var process_id_counter: u64 = 0;
-
-    pub fn initUserProcessFromElfFile(elf_file: []const u8) !Process {
-        const program_elf = (try Elf.init(elf_file)).Bit64;
-        var mem_mapper = try VirtualPageMapper.init(arch.page_allocation.page_allocator_ptr);
-        errdefer mem_mapper.deinit();
-        var gnu_stack_entry: ?Elf.Elf64.ProgramHeaderEntry = null;
-        // Allocate segments
-        for (program_elf.program_header) |*entry| {
-            switch (entry.type) {
-                .Loadable => {},
-                .GnuStack => {
-                    gnu_stack_entry = entry.*;
-                    continue;
-                },
-                else => continue,
-            }
-            // Get segment in program file
-            const segment_slice = @ptrCast(
-                [*]const u8,
-                &program_elf.file[entry.segment_offset],
-            )[0..entry.segment_image_size];
-            // Map segment to process memory
-            try mem_mapper.mapMemCopyFromBuffer(
-                entry.segment_virt_addr,
-                entry.segment_memory_size,
-                segment_slice,
-            );
-            // Set flags for segment
-            mem_mapper.changeFlagsRelaxing(
-                entry.segment_virt_addr,
-                arch.paging.PageTableEntry.generateU64(.{
-                    .present = true,
-                    .writable = entry.flags & 2 == 2,
-                    .no_execute = entry.flags & 1 == 0,
-                    .user_accessable = true,
-                }),
-                entry.segment_memory_size,
-            );
-        }
-        // Allocate single page for stack, rest gets dynamically allocated on page fault
-        const stack_page_address = (highest_program_segment_address + 1) & ~@as(usize, 0xFFF);
-        const stack_writable = if (gnu_stack_entry) |entry| entry.flags & 2 == 2 else true;
-        const stack_no_execute = if (gnu_stack_entry) |entry| entry.flags & 1 == 0 else true;
-        const stack_flags = arch.paging.PageTableEntry.generateU64(.{
-            .present = true,
-            .writable = stack_writable,
-            .no_execute = stack_no_execute,
-            .user_accessable = true,
-        });
-        try mem_mapper.mapMemCopyFromBuffer(
-            stack_page_address,
-            0x1000,
-            &[0]u8{},
-        );
-        mem_mapper.changeFlags(stack_page_address, stack_flags, 0x1000);
-        // Generate ID, process structure
-        const pid = @atomicRmw(u64, &process_id_counter, .Add, 1, .Acquire);
-        return Process{
-            .id = pid,
-            .stack_lower_limit = arch.common.process.highest_program_segment_address + 1,
-            .stack_upper_limit = arch.common.process.highest_user_address,
-            .stack_flags = stack_flags,
-            .registers = RegisterStore.init(.{
-                .stack_pointer = stack_page_address | 0xFF8,
-                .instruction_pointer = program_elf.header.prog_entry_pos,
-            }),
-            .process_type = .User,
-            .page_mapper = mem_mapper,
-        };
     }
 };
 

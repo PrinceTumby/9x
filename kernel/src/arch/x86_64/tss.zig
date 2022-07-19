@@ -1,29 +1,37 @@
 //! Kernel handling of the Task State Segment structure
 
-const DescriptorTablePointer = @import("common.zig").DescriptorTablePointer;
+const std = @import("std");
+const common = @import("common.zig");
+const DescriptorTablePointer = common.DescriptorTablePointer;
 const gdt_module = @import("gdt.zig");
 
 pub const TaskStateSegment = packed struct {
-    reserved_1: u32,
-    privilege_stack_table: [3]u64,
-    reserved_2: u64,
-    interrupt_stack_table: [7]u64,
-    reserved_3: u64,
-    reserved_4: u16,
-    iomap_base: u16,
+    reserved_1: u32 = 0,
+    privilege_stack_table: [3]u64 = [1]u64{0} ** 3,
+    reserved_2: u64 = 0,
+    interrupt_stack_table: [7]u64 = [1]u64{0} ** 7,
+    reserved_3: u64 = 0,
+    reserved_4: u16 = 0,
+    iopb_base: u16 = @byteOffsetOf(TaskStateSegment, "iopb") +
+        @byteOffsetOf(IoPermissionBitmap, "map"),
+    iopb: IoPermissionBitmap = .{},
+};
 
-    const Self = @This();
+pub const IoPermissionBitmap = extern struct {
+    map: [8192]u8 = [1]u8{std.math.maxInt(u8)} ** 8192,
 
-    pub fn new() Self {
-        return Self{
-            .privilege_stack_table = [1]u64{0} ** 3,
-            .interrupt_stack_table = [1]u64{0} ** 7,
-            .iomap_base = 0,
-            .reserved_1 = 0,
-            .reserved_2 = 0,
-            .reserved_3 = 0,
-            .reserved_4 = 0,
-        };
+    pub inline fn allowPort(self: *IoPermissionBitmap, port_num: u16) void {
+        const group_index = port_num / 8;
+        const index_in_group = @truncate(u3, port_num % 8);
+        const mask = ~(@as(u8, 1) << index_in_group);
+        self.map[group_index] &= mask;
+    }
+
+    pub inline fn disallowPort(self: *IoPermissionBitmap, port_num: u16) void {
+        const group_index = port_num / 8;
+        const index_in_group = @truncate(u3, port_num % 8);
+        const bit = @as(u8, 1) << index_in_group;
+        self.map[group_index] |= bit;
     }
 };
 
@@ -44,21 +52,21 @@ var general_protection_fault_stack: [4096]u8 align(16) = undefined;
 // Stack used for executing system calls
 var system_call_stack: [4096]u8 align(16) = undefined;
 
-var tss: TaskStateSegment = undefined;
+pub var tss: TaskStateSegment = undefined;
+pub const iopb_ptr = @alignCast(@alignOf(IoPermissionBitmap), &tss.iopb);
 
 fn getStackEnd(stack: []align(16) u8) usize {
     return (@ptrToInt(stack.ptr) + stack.len) & ~@as(u64, 0xF);
 }
 
-pub fn initTss() *const TaskStateSegment {
-    tss = TaskStateSegment.new();
+fn initTss() void {
+    tss = TaskStateSegment{};
     tss.privilege_stack_table[0] = getStackEnd(&system_call_stack);
     tss.interrupt_stack_table[@enumToInt(IstIndex.GenericStack)] = getStackEnd(&generic_stack);
     tss.interrupt_stack_table[@enumToInt(IstIndex.DoubleFault)] = getStackEnd(&double_fault_stack);
     tss.interrupt_stack_table[@enumToInt(IstIndex.PageFault)] = getStackEnd(&page_fault_stack);
     tss.interrupt_stack_table[@enumToInt(IstIndex.GeneralProtectionFault)] =
         getStackEnd(&general_protection_fault_stack);
-    return &tss;
 }
 
 pub fn loadTssIntoGdt() void {
@@ -70,7 +78,7 @@ pub fn loadTssIntoGdt() void {
     asm volatile ("sgdt (%[ptr])" :: [ptr] "r" (&ptr) : "memory");
     const gdt = @intToPtr(*[8]u64, ptr.base);
     // Load TSS into GDT
-    _ = initTss();
+    initTss();
     const tss_descriptor = gdt_module.Descriptor.tssSegment(&tss).system_segment;
     gdt[gdt_module.offset.tss / 8] = tss_descriptor[0];
     gdt[gdt_module.offset.tss / 8 + 1] = tss_descriptor[1];

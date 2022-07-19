@@ -3,13 +3,14 @@
 .rodata
 
 syscall_table:
-// .quad getPidSyscall
-// Debug system call
-// RDI contains message ptr, RSI contains message len
-// Returns 0 in RAX
 .quad getPidSyscall
-.quad debugSyscall
 .quad yieldSyscall
+.quad setBreakSyscall
+.quad moveBreakSyscall
+/// Debug system call
+/// RDI contains message ptr, RSI contains message len
+/// Returns 0 in RAX
+.quad debugSyscall
 syscall_table_len = (. - syscall_table) / 8
 
 .text
@@ -121,25 +122,42 @@ syscallSemiKernelBody:
     jmpq *%rax
 .size syscallSemiKernelBody, . - syscallSemiKernelBody
 
+.macro defineZigSyscall name, syscall_num
+    .type \name, @function
+    \name:
+        // Swap GS to contain pointer to kernel thread local storage
+        swapgs
+        // Write yield reason
+        movq $YieldInfo.Reason.system_call_request, %gs:ThreadLocalVariables.yield_info.reason
+        // Save RAX
+        movq \syscall_num, %gs:ThreadLocalVariables.current_process.registers.rax
+        jmp syscallSemiKernelBody
+    .size \name, . - \name
+.endm
+
 // Zig system calls
 
-.type debugSyscall, @function
-debugSyscall:
-    // Swap GS to contain pointer to kernel thread local storage
-    swapgs
-    // Write yield reason
-    movq $YieldInfo.Reason.SystemCallRequest, %gs:ThreadLocalVariables.yield_info.reason
-    // Save RAX
-    movq $SystemCall.Debug, %gs:ThreadLocalVariables.current_process.registers.rax
-    jmp syscallSemiKernelBody
-.size debugSyscall, . - debugSyscall
+defineZigSyscall setBreakSyscall, $SystemCall.set_break
+defineZigSyscall moveBreakSyscall, $SystemCall.move_break
+defineZigSyscall debugSyscall, $SystemCall.debug
+
+// .type debugSyscall, @function
+// debugSyscall:
+//     // Swap GS to contain pointer to kernel thread local storage
+//     swapgs
+//     // Write yield reason
+//     movq $YieldInfo.Reason.SystemCallRequest, %gs:ThreadLocalVariables.yield_info.reason
+//     // Save RAX
+//     movq $SystemCall.debug, %gs:ThreadLocalVariables.current_process.registers.rax
+//     jmp syscallSemiKernelBody
+// .size debugSyscall, . - debugSyscall
 
 .type yieldSyscall, @function
 yieldSyscall:
     // Swap GS to contain pointer to kernel thread local storage
     swapgs
     // Write yield reason
-    movq $YieldInfo.Reason.YieldSystemCall, %gs:ThreadLocalVariables.yield_info.reason
+    movq $YieldInfo.Reason.yield_system_call, %gs:ThreadLocalVariables.yield_info.reason
     // No Zig system call number, so write out zero
     movq $0, %gs:ThreadLocalVariables.current_process.registers.rax
     jmp syscallSemiKernelBody

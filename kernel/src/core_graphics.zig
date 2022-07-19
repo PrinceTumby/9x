@@ -49,9 +49,13 @@ pub const FrameBuffer = struct {
 
     /// Clears the screen to all black
     pub fn clear(self: *FrameBuffer) void {
-        for (self.fb) |*pixel| {
-            pixel.* = 0;
-        }
+        @setRuntimeSafety(false);
+        // for (self.fb) |*pixel| {
+        //     pixel.* = 0;
+        // }
+        const byte_ptr = @ptrCast([*]u8, self.fb.ptr);
+        const byte_len = self.fb.len * 4;
+        @memset(byte_ptr, 0, byte_len);
         self.buffer_dirty = false;
     }
 
@@ -71,6 +75,7 @@ pub const FrameBuffer = struct {
         if (dst_x + width > self.width or dst_y + height > self.height) {
             @panic("fb copy: destination rectangle out of bounds");
         }
+        @setRuntimeSafety(false);
         var y: u32 = 0;
         while (y < height) : (y += 1) {
             var x: u32 = 0;
@@ -82,6 +87,7 @@ pub const FrameBuffer = struct {
 
     pub fn fill(self: *const FrameBuffer, x: u32, y: u32, end_x: u32, end_y: u32, val: u32) void {
         if (end_x > self.width or end_y > self.height) @panic("framebuffer fill incorrect args");
+        @setRuntimeSafety(false);
         var cur_y: u32 = y;
         while (cur_y < end_y) : (cur_y += 1) {
             var cur_x: u32 = x;
@@ -99,6 +105,7 @@ pub const FrameBuffer = struct {
         height: u32,
         val: u32,
     ) void {
+        @setRuntimeSafety(false);
         const x_max: u32 = x + width;
         const y_max: u32 = y + height;
         var cur_y: u32 = y;

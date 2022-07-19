@@ -5,7 +5,6 @@ const Target = std.Target;
 const CrossTarget = std.zig.CrossTarget;
 const builtin = @import("builtin");
 const multiboot2_builder = @import("../../../../boot/multiboot2/build.zig");
-const build_options = @import("../../../config/config.zig");
 
 pub fn build(b: *Builder) void {
     const build_mode = b.standardReleaseOptions();
@@ -54,7 +53,13 @@ pub fn build(b: *Builder) void {
 
     // Main kernel executable
     const kernel = b.addExecutable("kernel_unstripped", "src/main.zig");
+    kernel.addBuildOption(bool, "multicore", b.option(
+        bool,
+        "multicore",
+        "Enables or disables multicore. Changes SMP data structures.",
+    ) orelse true);
     kernel.addAssemblyFile("src/arch/x86_64/init.s");
+    kernel.addAssemblyFile("src/arch/x86_64/interrupts.s");
     kernel.addAssemblyFile("src/arch/x86_64/task.s");
     kernel.addAssemblyFile("src/arch/x86_64/syscall.s");
     kernel.setBuildMode(build_mode);

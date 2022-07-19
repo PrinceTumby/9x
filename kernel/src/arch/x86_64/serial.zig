@@ -5,6 +5,11 @@ const common = @import("common.zig");
 const portReadByte = common.port.readByte;
 const portWriteByte = common.port.writeByte;
 
+pub const Com1 = Port(0x3F8);
+pub const Com2 = Port(0x2F8);
+pub const Com3 = Port(0x3E8);
+pub const Com4 = Port(0x2E8);
+
 pub fn Port(comptime port: u16) type {
     return struct {
         pub const data: u16 = port;
@@ -30,9 +35,9 @@ pub fn Port(comptime port: u16) type {
             portWriteByte(scratch_reg, 0x00);
             // Disable all interrupts
             portWriteByte(interrupt_enable_reg, 0x00);
-            // Enable DLAB, set rate to 38400 baud
+            // Enable DLAB, set rate to 115,200 baud
             portWriteByte(line_control_reg, 0x80);
-            portWriteByte(divisor_low, 0x03);
+            portWriteByte(divisor_low, 0x01);
             portWriteByte(divisor_high, 0x00);
             // Disable DLAB, set 8 bits, no parity, 1 stop bit
             portWriteByte(line_control_reg, 0x03);
@@ -76,7 +81,39 @@ pub fn Port(comptime port: u16) type {
     };
 }
 
-pub const Com1 = Port(0x3F8);
-pub const Com2 = Port(0x2F8);
-pub const Com3 = Port(0x3E8);
-pub const Com4 = Port(0x2E8);
+pub fn Writer(comptime port: type) type {
+    return struct {
+        var write_buffer: [256]u8 = undefined;
+
+        const Self = @This();
+
+        pub const Error = error {};
+
+        pub fn tryInit(self: Self) bool {
+            return port.init();
+        }
+
+        pub fn writeAll(self: Self, bytes: []const u8) Error!void {
+            for (bytes) |byte| {
+                if (byte == '\n') port.writeByte('\r');
+                port.writeByte(byte);
+            }
+        }
+
+        pub fn writeByte(self: Self, byte: u8) Error!void {
+            if (byte == '\n') port.writeByte('\r');
+            port.writeByte(byte);
+        }
+
+        pub fn writeByteNTimes(self: Self, byte: u8, n: usize) Error!void {
+            std.mem.set(u8, write_buffer[0..], byte);
+
+            var remaining: usize = n;
+            while (remaining > 0) {
+                const to_write = std.math.min(remaining, write_buffer.len);
+                try self.writeAll(write_buffer[0..to_write]);
+                remaining -= to_write;
+            }
+        }
+    };
+}

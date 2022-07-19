@@ -4,7 +4,6 @@ const Builder = std.build.Builder;
 const Target = std.Target;
 const CrossTarget = std.zig.CrossTarget;
 const builtin = @import("builtin");
-const build_options = @import("../../../config/config.zig");
 
 pub fn build(b: *Builder) void {
     const build_mode = b.standardReleaseOptions();

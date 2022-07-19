@@ -7,13 +7,17 @@ const builtin = @import("builtin");
 const BuildFunc = fn(b: *Builder) void;
 
 const supported_archs = [_][]const u8{
-    "x86_64",
+    "arm",
+    "aarch64",
     "riscv64",
+    "x86_64",
 };
 
 const cpu_arch_map = std.ComptimeStringMap(Target.Cpu.Arch, .{
-    .{ "x86_64", .x86_64 },
+    .{ "arm", .arm },
+    .{ "aarch64", .aarch64 },
     .{ "riscv64", .riscv64 },
+    .{ "x86_64", .x86_64 },
 });
 
 fn missingBuildFunc(_b: *Builder) void {

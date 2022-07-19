@@ -202,6 +202,7 @@ taskSwitchKernelMainToUserIret:
     iretq
 .size taskSwitchKernelMainToUserIret, . - taskSwitchKernelMainToUserIret
 
+.global interruptContextSwitchBody
 .type interruptContextSwitchBody, @function
 interruptContextSwitchBody:
     // Save vector state, get pointer to register storage
@@ -310,7 +311,7 @@ timerContextSwitchHandler:
     // Swap GS to contain pointer to kernel thread local storage
     swapgs
     // Write yield reason
-    movq $YieldInfo.Reason.Timeout, %gs:ThreadLocalVariables.yield_info.reason
+    movq $YieldInfo.Reason.timeout, %gs:ThreadLocalVariables.yield_info.reason
     // Save RAX
     movq %rax, %gs:ThreadLocalVariables.current_process.registers.rax
     // Jump to main interrupt context switch system

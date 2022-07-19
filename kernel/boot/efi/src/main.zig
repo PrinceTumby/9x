@@ -76,6 +76,7 @@ fn loadInitrd(image_handle: uefi.Handle) InitrdError![]align(8) u8 {
     if (drive_protocol.openVolume(&file_system_protocol) != .Success) {
         return error.DriveMountError;
     }
+    logger.debug("Drive opened", .{});
     // Open initrd
     var initrd_file: *const uefi.protocols.FileProtocol = undefined;
     if (file_system_protocol.open(

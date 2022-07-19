@@ -32,6 +32,10 @@ pub noinline fn printStackTrace(trace_maybe: ?*std.builtin.StackTrace) void {
         const kernel_elf_file_slice = kernel_elf_file orelse break :blk null;
         const parsed_elf = debug_elf.Elf.init(kernel_elf_file_slice) catch break :blk null;
         switch (parsed_elf) {
+            .Bit32 => |elf_32| {
+                if (elf_32.string_table == null) break :blk null;
+                if (elf_32.symbol_table == null) break :blk null;
+            },
             .Bit64 => |elf_64| {
                 if (elf_64.string_table == null) break :blk null;
                 if (elf_64.symbol_table == null) break :blk null;

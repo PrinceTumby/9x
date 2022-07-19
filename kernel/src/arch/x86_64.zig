@@ -7,6 +7,7 @@ pub const gdt = @import("x86_64/gdt.zig");
 pub const idt = @import("x86_64/idt.zig");
 pub const paging = @import("x86_64/paging.zig");
 pub const tss = @import("x86_64/tss.zig");
+pub const bochs_debug = @import("x86_64/bochs_debug.zig");
 pub const serial = @import("x86_64/serial.zig");
 pub const ps2_controller = @import("x86_64/ps2_8042_controller.zig");
 pub const ps2_manager = @import("x86_64/ps2_manager.zig");
@@ -14,6 +15,17 @@ pub const apic = @import("x86_64/apic.zig");
 pub const clock_manager = @import("x86_64/clock_manager.zig");
 
 // Architecture specific kernel feature implementation
+
+pub const loggers = struct {
+    pub const logger_list = .{
+        bochs_debug.Writer{},
+        serial.Writer(serial.Com1){},
+    };
+    pub var logger_enabled_list = [_]bool{
+        false,
+        false,
+    };
+};
 
 pub const interrupts = @import("x86_64/interrupts.zig");
 pub const page_allocation = @import("x86_64/page_allocation.zig");
@@ -28,7 +40,6 @@ comptime {
 
 // Other platform exports
 
-pub const build_options = @import("root").build_options.arch.x86_64;
 pub const platform = struct {
     pub const acpi = @import("../platform/acpi.zig");
 };
@@ -53,13 +64,16 @@ const AcpiBoolean = acpica.AcpiBoolean;
 
 const logger = std.log.scoped(.x86_64);
 
+pub fn initEarlyLoggers() void {
+    inline for (loggers.logger_list) |writer, i| {
+        loggers.logger_enabled_list[i] = writer.tryInit();
+    }
+}
+
 pub fn stage1Init(_args: *KernelArgs) void {
     gdt.loadNoReloadSegmentDescriptors();
     tss.loadTssIntoGdt();
     interrupts.initIDT();
-    logging.tryEnableSerialWriters();
-    // Enable bochs writer if port returns 0xE9
-    if (common.port.readByte(0xE9) == 0xE9) logging.bochs_writer = .{};
 }
 
 pub fn stage2Init(args: *KernelArgs) void {

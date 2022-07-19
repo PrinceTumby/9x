@@ -10,3 +10,4 @@ bx_enh_dbg.ini
 pipe_server.exe
 qemu_lldb.bat
 run*.bat
+pypxe.bat

@@ -12,75 +12,6 @@ const BoundedArray = root.zig_extensions.BoundedArray;
 const fmt = std.fmt;
 const serial = arch.serial;
 
-pub fn SerialWriter(comptime port: type) type {
-    return struct {
-        var write_buffer: [256]u8 = undefined;
-
-        const Self = @This();
-
-        pub const Error = error {};
-
-        pub fn tryInit() ?Self {
-            return if (port.init()) Self{} else null;
-        }
-
-        pub fn writeAll(self: Self, bytes: []const u8) Error!void {
-            for (bytes) |byte| {
-                if (byte == '\n') port.writeByte('\r');
-                port.writeByte(byte);
-            }
-        }
-
-        pub fn writeByte(self: Self, byte: u8) Error!void {
-            if (byte == '\n') port.writeByte('\r');
-            port.writeByte(byte);
-        }
-
-        pub fn writeByteNTimes(self: Self, byte: u8, n: usize) Error!void {
-            std.mem.set(u8, write_buffer[0..], byte);
-
-            var remaining: usize = n;
-            while (remaining > 0) {
-                const to_write = std.math.min(remaining, write_buffer.len);
-                try self.writeAll(write_buffer[0..to_write]);
-                remaining -= to_write;
-            }
-        }
-    };
-}
-
-pub const BochsWriter = struct {
-    var write_buffer: [256]u8 = undefined;
-
-    pub const Error = error {};
-
-    inline fn writeByteOut(byte: u8) void {
-        asm volatile ("outb %[byte], $0xE9" :: [byte] "{al}" (byte));
-    }
-
-    pub fn writeAll(self: BochsWriter, bytes: []const u8) Error!void {
-        for (bytes) |byte| {
-            try self.writeByte(byte);
-        }
-    }
-
-    pub inline fn writeByte(self: BochsWriter, byte: u8) Error!void {
-        if (byte == '\n') writeByteOut('\r');
-        writeByteOut(byte);
-    }
-
-    pub fn writeByteNTimes(self: BochsWriter, byte: u8, n: usize) Error!void {
-        std.mem.set(u8, write_buffer[0..], byte);
-
-        var remaining: usize = n;
-        while (remaining > 0) {
-            const to_write = std.math.min(remaining, write_buffer.len);
-            try self.writeAll(write_buffer[0..to_write]);
-            remaining -= to_write;
-        }
-    }
-};
-
 const ScreenWriter = struct {
     text_display: *text_lib.TextDisplay(Framebuffer),
 
@@ -160,22 +91,16 @@ pub const AbstractWriter = struct {
 
 pub const log_writer: LogWriter = .{};
 
-pub var com1_writer: ?SerialWriter(serial.Com1) = null;
-pub var com2_writer: ?SerialWriter(serial.Com2) = null;
-pub var com3_writer: ?SerialWriter(serial.Com3) = null;
-pub var com4_writer: ?SerialWriter(serial.Com4) = null;
-pub var bochs_writer: ?BochsWriter = null;
-// pub const bochs_writer: ?BochsWriter = null;
+pub const arch_writers = switch (@hasDecl(arch, "loggers")) {
+    true => arch.loggers,
+    false => struct {
+        pub const logger_list = [0]void{};
+        pub const logger_enabled_list = [0]bool{};
+    }
+};
 pub var abstract_writers = BoundedArray(AbstractWriter, 8){};
 pub var screen_writer: ?ScreenWriter = null;
 pub var writer_lock = smp.SpinLock.init();
-
-pub fn tryEnableSerialWriters() void {
-    com1_writer = SerialWriter(serial.Com1).tryInit();
-    com2_writer = SerialWriter(serial.Com2).tryInit();
-    com3_writer = SerialWriter(serial.Com3).tryInit();
-    com4_writer = SerialWriter(serial.Com4).tryInit();
-}
 
 pub fn enableTextDisplayLogger(screen: *text_lib.TextDisplay(Framebuffer)) void {
     screen_writer = .{.text_display = screen};
@@ -188,11 +113,10 @@ pub fn removeLogDevice() void {
 pub fn logRawLn(comptime format: []const u8, args: anytype) void {
     const lock = writer_lock.acquire();
     defer lock.release();
-    if (bochs_writer) |writer| {
-        fmt.format(writer, format ++ "\n", args) catch {};
-    }
-    if (com1_writer) |writer| {
-        fmt.format(writer, format ++ "\n", args) catch {};
+    inline for (arch_writers.logger_list) |writer, i| {
+        if (arch_writers.logger_enabled_list[i]) {
+            fmt.format(writer, format ++ "\n", args) catch {};
+        }
     }
     if (screen_writer) |writer| {
         fmt.format(writer, format ++ "\n", args) catch {};
@@ -205,11 +129,10 @@ pub fn logRawLn(comptime format: []const u8, args: anytype) void {
 pub fn logRaw(comptime format: []const u8, args: anytype) void {
     const lock = writer_lock.acquire();
     defer lock.release();
-    if (bochs_writer) |writer| {
-        fmt.format(writer, format, args) catch {};
-    }
-    if (com1_writer) |writer| {
-        fmt.format(writer, format, args) catch {};
+    inline for (arch_writers.logger_list) |writer, i| {
+        if (arch_writers.logger_enabled_list[i]) {
+            fmt.format(writer, format, args) catch {};
+        }
     }
     if (screen_writer) |writer| {
         fmt.format(writer, format, args) catch {};
@@ -228,11 +151,10 @@ pub fn log(
     const lock = writer_lock.acquire();
     defer lock.release();
     const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
-    if (bochs_writer) |writer| {
-        fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
-    }
-    if (com1_writer) |writer| {
-        fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
+    inline for (arch_writers.logger_list) |writer, i| {
+        if (arch_writers.logger_enabled_list[i]) {
+            fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
+        }
     }
     if (screen_writer) |writer| {
         fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
@@ -251,11 +173,10 @@ pub fn logNoNewline(
     const lock = writer_lock.acquire();
     defer lock.release();
     const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
-    if (bochs_writer) |writer| {
-        fmt.format(writer, prefix ++ format, args) catch {};
-    }
-    if (com1_writer) |writer| {
-        fmt.format(writer, prefix ++ format, args) catch {};
+    inline for (arch_writers.logger_list) |writer, i| {
+        if (arch_writers.logger_enabled_list[i]) {
+            fmt.format(writer, prefix ++ format, args) catch {};
+        }
     }
     if (screen_writer) |writer| {
         fmt.format(writer, prefix ++ format, args) catch {};
@@ -277,15 +198,12 @@ pub fn logString(
     const lock = writer_lock.acquire();
     defer lock.release();
     const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
-    if (bochs_writer) |writer| {
-        writer.writeAll(prefix ++ prefix_string) catch return;
-        writer.writeAll(string) catch return;
-        writer.writeByte('\n') catch return;
-    }
-    if (com1_writer) |writer| {
-        writer.writeAll(prefix ++ prefix_string) catch return;
-        writer.writeAll(string) catch return;
-        writer.writeByte('\n') catch return;
+    inline for (arch_writers.logger_list) |writer, i| {
+        if (arch_writers.logger_enabled_list[i]) {
+            writer.writeAll(prefix ++ prefix_string) catch return;
+            writer.writeAll(string) catch return;
+            writer.writeByte('\n') catch return;
+        }
     }
     if (screen_writer) |writer| {
         writer.writeAll(prefix ++ prefix_string) catch return;

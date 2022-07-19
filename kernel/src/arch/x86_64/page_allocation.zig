@@ -159,7 +159,11 @@ pub const PageAllocator = struct {
             0x0000_3FE0_0000,
             0x0000_001F_F000,
         };
-        const num_pages = if (size & 0xFFF != 0) (size >> 12) + 1 else size >> 12;
+        const num_pages = blk: {
+            const lower_bound = std.mem.alignBackward(physical_start_address, 4096);
+            const upper_bound = std.mem.alignBackward(physical_start_address +% size -% 1, 4096);
+            break :blk ((upper_bound - lower_bound) >> 12) + 1;
+        };
         var page_i: usize = 0;
         while (page_i < num_pages) : (page_i += 1) {
             const physical_address = actual_physical_start_address + (page_i << 12);
@@ -227,7 +231,11 @@ pub const PageAllocator = struct {
             0x0000_3FE0_0000,
             0x0000_001F_F000,
         };
-        const num_pages = if (size & 0xFFF != 0) (size >> 12) + 1 else size >> 12;
+        const num_pages = blk: {
+            const lower_bound = std.mem.alignBackward(start_address, 4096);
+            const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
+            break :blk ((upper_bound - lower_bound) >> 12) + 1;
+        };
         var page_i: usize = 0;
         outer: while (page_i < num_pages) : (page_i += 1) {
             const virtual_address = actual_start_address + (page_i << 12);
@@ -279,7 +287,11 @@ pub const PageAllocator = struct {
             0x0000_3FE0_0000,
             0x0000_001F_F000,
         };
-        const num_pages = if (size & 0xFFF != 0) (size >> 12) + 1 else size >> 12;
+        const num_pages = blk: {
+            const lower_bound = std.mem.alignBackward(start_address, 4096);
+            const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
+            break :blk ((upper_bound - lower_bound) >> 12) + 1;
+        };
         var page_i: usize = 0;
         outer: while (page_i < num_pages) : (page_i += 1) {
             const virtual_address = actual_start_address + (page_i << 12);
@@ -401,7 +413,11 @@ pub const PageAllocator = struct {
             0x0000_3FE0_0000,
             0x0000_001F_F000,
         };
-        const num_pages = if (size & 0xFFF != 0) (size >> 12) + 1 else size >> 12;
+        const num_pages = blk: {
+            const lower_bound = std.mem.alignBackward(virtual_start_address, 4096);
+            const upper_bound = std.mem.alignBackward(virtual_start_address +% size -% 1, 4096);
+            break :blk ((upper_bound - lower_bound) >> 12) + 1;
+        };
         var page_i: usize = 0;
         while (page_i < num_pages) : (page_i += 1) {
             const virtual_address = virtual_start_address + (page_i << 12);

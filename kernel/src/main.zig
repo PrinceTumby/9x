@@ -1,4 +1,3 @@
-pub const build_options = @import("config/config.zig");
 pub const cpio = @import("cpio.zig");
 pub const zig_extensions = @import("zig_extensions.zig");
 pub const Framebuffer = @import("core_graphics.zig").FrameBuffer;
@@ -58,8 +57,17 @@ pub fn breakpointLine(src: std.builtin.SourceLocation) void {
     // asm volatile ("xchgw %%bx, %%bx");
 }
 
+// export fn kernel_main(args: *KernelArgs) noreturn {
+//     if (@hasDecl(arch, "initEarlyLoggers")) arch.initEarlyLoggers();
+//     kernel_args = args;
+//     logger.debug("KERNEL START", .{});
+//     while (true) {}
+// }
+
 // Called by the architecture specific initialisation code
 export fn kernel_main(args: *KernelArgs) noreturn {
+    if (@hasDecl(arch, "initEarlyLoggers")) arch.initEarlyLoggers();
+    // asm volatile ("hlt");
     kernel_args = args;
     // const KERNEL_SIZE = @ptrToInt(&KERNEL_END) - @ptrToInt(&KERNEL_BASE) + 1;
     // const STACK_SIZE = @ptrToInt(&STACK_END) - @ptrToInt(&STACK_BASE) + 1;
@@ -132,36 +140,41 @@ export fn kernel_main(args: *KernelArgs) noreturn {
             process.process_list.push(127, example_process);
         }
     }
-    while (true) {
-        const new_process = process.process_list.tryPop() orelse break;
-        tls_ptr.current_process = new_process.*;
-        tls_ptr.current_process_heap_ptr = new_process;
-        defer {
-            new_process.* = tls_ptr.current_process;
-            process.process_list.push(127, new_process);
-        }
+    // {
+    //     arch.tss.iopb_ptr.allowPort(0x3F8);
+    //     arch.tss.iopb_ptr.allowPort(0x3FD);
+    //     arch.tss.iopb_ptr.disallowPort(0x3F8);
+    //     // if (@ptrToInt(&KERNEL_BASE) > 0) while (true) {};
+    // }
+    outer: while (true) {
+        const new_process_ptr = process.process_list.tryPop() orelse break;
+        tls_ptr.current_process = new_process_ptr.*;
+        tls_ptr.current_process_heap_ptr = new_process_ptr;
         arch.clock_manager.startCountdown(100);
         arch.clock_manager.acknowledgeCountdownInterrupt();
         while (true) {
             asm volatile ("xchgw %%bx, %%bx");
             arch.task.resumeUserProcess(&tls_ptr.current_process);
             switch (tls_ptr.yield_info.reason) {
-                .Timeout => {
+                .timeout => {
                     arch.clock_manager.acknowledgeCountdownInterrupt();
                     break;
                 },
-                .SystemCallRequest => arch.syscall.handleSystemCall(),
-                .YieldSystemCall => break,
+                .system_call_request => arch.syscall.handleSystemCall(),
+                .yield_system_call => break,
+                .exception => arch.syscall.handleException(),
                 else => {
                     logger.debug("Unknown yield reason: {}", .{tls_ptr.yield_info.reason});
                     @panic("unknown yield reason");
                 },
             }
             if (arch.clock_manager.getCountdownRemainingTime() == 0) {
-                tls_ptr.yield_info.reason = .Timeout;
+                tls_ptr.yield_info.reason = .timeout;
                 break;
             }
         }
+        new_process_ptr.* = tls_ptr.current_process;
+        process.process_list.push(127, new_process_ptr);
     }
     logger.debug("KERNEL END", .{});
     while (true) {

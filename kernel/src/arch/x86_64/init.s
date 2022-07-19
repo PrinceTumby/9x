@@ -54,6 +54,7 @@ GDT64:
 init64:
     cli
     cld
+// hlt
     andq $~0xF, %rsp
     movq %rsp, %rbp
 
@@ -82,8 +83,12 @@ init64:
     // Inititalise CR0
     movq $0x80000001, %rax
     movq %rax, %cr0
-    // Initialise CR4
-    movq $0x402A0, %rax
+    // Modify CR4 - enable PAE, PGE, OSFXSR
+    movq %cr4, %rax
+    andq $0xFFFFFFFFFE08D2A0, %rax
+    orq $0x2A0, %rax
+    // orq $0xAA0, %rax
+    // movq $0x402A0, %rax
     movq %rax, %cr4
     // Modify EFER - enable NX and SYSCALL, disable Fast FXSAVE/FXRSTOR
     movl $0xC0000080, %ecx

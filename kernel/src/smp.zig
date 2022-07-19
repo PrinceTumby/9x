@@ -1,11 +1,10 @@
 //! Multithreading synchronisation primitives
 
 const std = @import("std");
-const builtin = std.builtin;
 const root = @import("root");
-const multicore_support = root.build_options.multicore_support;
+const build_options = @import("build_options");
 
-pub const SpinLock = if (multicore_support) struct {
+pub const SpinLock = if (build_options.multicore) struct {
     state: State = .Unlocked,
 
     const State = enum(u8) {
@@ -57,7 +56,7 @@ pub const SpinLock = if (multicore_support) struct {
     fn spin() void {
         var i: usize = 400;
         while (i != 0) : (i -= 1) {
-            switch (builtin.arch) {
+            switch (std.builtin.arch) {
                 .i386, .x86_64 => asm volatile ("pause"
                     :
                     :
@@ -76,7 +75,7 @@ pub const SpinLock = if (multicore_support) struct {
                 ),
                 else => @compileError(
                     "No spinlock pause instruction programmed for " ++
-                    @tagName(builtin.arch)
+                    @tagName(std.builtin.arch)
                 ),
             }
         }

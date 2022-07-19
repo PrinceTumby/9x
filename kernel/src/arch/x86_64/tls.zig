@@ -38,18 +38,18 @@ pub const ThreadLocalVariables = struct {
     };
 
     pub const YieldInfo = extern struct {
-        reason: Reason = .Timeout,
+        reason: Reason = .timeout,
         // Only used if an exception ocurred
         exception_type: ExceptionType = undefined,
         exception_error_code: u64 = 0,
         page_fault_address: u64 = 0,
 
         pub const Reason = enum(u64) {
-            Timeout,
-            YieldSystemCall,
-            SystemCallRequest,
-            ExitRequest,
-            Exception,
+            timeout,
+            yield_system_call,
+            system_call_request,
+            exitrequest,
+            exception,
 
             comptime {
                 @setEvalBranchQuota(5000);
@@ -60,29 +60,29 @@ pub const ThreadLocalVariables = struct {
         };
 
         pub const ExceptionType = enum(u64) {
-            DivideByZero = 0,
-            Debug = 1,
-            NonMaskableInterrupt = 2,
-            Breakpoint = 3,
-            Overflow = 4,
-            BoundRangeExceeded = 5,
-            InvalidOpcode = 6,
-            DeviceNotAvailable = 7,
-            DoubleFault = 8,
-            InvalidTss = 10,
-            SegmentNotPresent = 11,
-            StackSegmentFault = 12,
-            GeneralProtectionFault = 13,
-            PageFault = 14,
-            x87FloatingPoint = 16,
-            AlignmentCheck = 17,
-            MachineCheck = 18,
-            SimdFloatingPoint = 19,
-            Virtualization = 20,
-            ControlProtection = 21,
-            HypervisorInjection = 28,
-            VmmCommunication = 29,
-            Security = 30,
+            divide_by_zero = 0,
+            debug = 1,
+            non_maskable_interrupt = 2,
+            breakpoint = 3,
+            overflow = 4,
+            bound_range_exceeded = 5,
+            invalid_opcode = 6,
+            device_not_available = 7,
+            double_fault = 8,
+            invalid_tss = 10,
+            segment_not_present = 11,
+            stack_segment_fault = 12,
+            general_protection_fault = 13,
+            page_fault = 14,
+            x87_floating_point = 16,
+            alignment_check = 17,
+            machine_check = 18,
+            simd_floating_point = 19,
+            virtualization = 20,
+            control_protection = 21,
+            hypervisor_injection = 28,
+            vmm_communication = 29,
+            security = 30,
             _,
 
             comptime {
