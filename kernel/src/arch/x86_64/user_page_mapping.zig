@@ -7,11 +7,18 @@ const PageTableEntry = paging.PageTableEntry;
 
 const logger = std.log.scoped(.x86_64_virtual_page_mapping);
 
-pub const VirtualPageMapper = struct {
+pub const UserPageMapper = struct {
     page_allocator: *PageAllocator,
     page_table: PageTableEntry,
 
-    pub fn init(page_allocator: *PageAllocator) !VirtualPageMapper {
+    const level_masks = [_]u64{
+        0xFF80_0000_0000,
+        0x007F_C000_0000,
+        0x0000_3FE0_0000,
+        0x0000_001F_F000,
+    };
+
+    pub fn init(page_allocator: *PageAllocator) !UserPageMapper {
         // Create new PML4, clear first half
         const page = try page_allocator.findAndReservePage();
         const page_table = @ptrCast(*allowzero align(4096) [512]u64, page)[0 .. page.len / 8];
@@ -25,13 +32,13 @@ pub const VirtualPageMapper = struct {
             page_table[i + 256] = entry.*;
         }
         // Return new page table with empty lower half
-        return VirtualPageMapper{
+        return UserPageMapper{
             .page_allocator = page_allocator,
             .page_table = PageTableEntry.fromU64(@ptrToInt(page_table)),
         };
     }
 
-    pub fn deinit(self: *VirtualPageMapper) void {
+    pub fn deinit(self: *UserPageMapper) void {
         const node = @intToPtr(*[512]PageTableEntry, self.page_table.getAddress());
         for (node[0..256]) |entry| {
             if (entry.isPresent()) self.freePageTree(entry, 0);
@@ -39,12 +46,72 @@ pub const VirtualPageMapper = struct {
         self.page_allocator.freePage(self.page_table.getAddress());
     }
 
+    /// Maps a new page to virtual memory at `virtual_start_address` aligned down to the nearest
+    /// page, including any required parent pages. Page will be zeroed out. Generated parent pages
+    /// are set to read/write/execute. Child page flags will be set to `flags`. `pages_left`, if
+    /// provided, will be decremented every time a page is allocated. If `pages_left` runs out of
+    /// pages, all allocated parent pages will be freed and `error.OutOfPages` will be returned.
+    /// Does not do any page invalidation, so the address space must not be in use.
+    pub fn mapBlankPage(
+        self: *UserPageMapper,
+        virtual_start_address: u64,
+        flags: u64,
+        pages_left: ?*u64,
+    ) !void {
+        const parent_flags = PageTableEntry.generateU64(.{
+            .present = true,
+            .writable = true,
+            .user_accessible = true,
+        });
+        // Ensure only normal flags are used, also ensures present and user accessible are set.
+        const child_flags = (flags & 0x8000_0000_0000_0007) | 5;
+        // Store any parent pages created, free if an error occurs.
+        var parent_pages_created = [3]?[*]allowzero align(4096) u8{ null, null, null };
+        errdefer for (parent_pages_created) |page_ptr_maybe| if (page_ptr_maybe) |page_ptr| {
+            self.page_allocator.freePage(@intToPtr(page_ptr));
+        };
+        // Loop through page levels
+        const virtual_address = virtual_start_address + (page_i << 12);
+        var current_address = self.page_table.getAddress();
+        for (level_masks) |level_mask, i| {
+            const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
+            const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
+            const index = @truncate(
+                u9,
+                (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
+            );
+            var entry = current_table[index];
+            // Allocate page if required
+            if (!entry.isPresent()) {
+                if (pages_left) |pages_left_ptr| {
+                    if (pages_left_ptr == 0) return error.ZeroPagesLeft;
+                    pages_left_ptr -= 1;
+                }
+                // Allocate and zero out page
+                const new_page = @ptrCast(
+                    [*]allowzero align(4096) u8,
+                    try self.page_allocator.findAndReservePage(),
+                );
+                for (new_address[0..4096]) |*byte| byte.* = 0;
+                // Add parent page to created list
+                if (i < 3) parent_pages_created[i] = new_page;
+                // Map entry
+                const stripped_address = @ptrToInt(new_page) & 0x000FFFFFFFFFF000;
+                const new_entry = stripped_address | if (i < 3) parent_flags else child_flags;
+                current_table_ptr[index] = new_entry;
+                entry = PageTableEntry.fromU64(new_entry);
+            }
+            current_address = entry.getAddress();
+        }
+    }
+
     /// Maps `(size / 4096) + 1` free pages to virtual memory at start address. Fills pages with
     /// data from provided buffer. Memory past buffer length is zeroed. Generated child entries are
     /// set to be only readable, generated parent entries are set to be read/write/execute. Flags
     /// for already existing parent pages are preserved.
+    /// Does not do any page invalidation, so the address space must not be in use.
     pub fn mapMemCopyFromBuffer(
-        self: *VirtualPageMapper,
+        self: *UserPageMapper,
         virtual_start_address: u64,
         size: u64,
         buffer: []const u8,
@@ -57,12 +124,6 @@ pub const VirtualPageMapper = struct {
             .present = true,
             .no_execute = true,
         });
-        const level_masks = [_]u64{
-            0xFF80_0000_0000,
-            0x007F_C000_0000,
-            0x0000_3FE0_0000,
-            0x0000_001F_F000,
-        };
         const num_pages = blk: {
             const lower_bound = std.mem.alignBackward(virtual_start_address, 4096);
             const upper_bound = std.mem.alignBackward(virtual_start_address +% size -% 1, 4096);
@@ -98,11 +159,6 @@ pub const VirtualPageMapper = struct {
                         const new_entry: u64 = stripped_address | parent_flags;
                         current_table_ptr[index] = new_entry;
                         entry = PageTableEntry.fromU64(new_entry);
-                        asm volatile ("invlpg (%[page])"
-                            :
-                            : [page] "r" (new_address)
-                            : "memory"
-                        );
                     } else {
                         // Allocate new page
                         const new_page = try self.page_allocator.findAndReservePage();
@@ -111,11 +167,6 @@ pub const VirtualPageMapper = struct {
                         const new_entry: u64 = stripped_address | flags;
                         current_table_ptr[index] = new_entry;
                         entry = PageTableEntry.fromU64(new_entry);
-                        asm volatile ("invlpg (%[page])"
-                            :
-                            : [page] "r" (virtual_address)
-                            : "memory"
-                        );
                     }
                 }
                 if (i == 3) {
@@ -141,98 +192,102 @@ pub const VirtualPageMapper = struct {
         }
     }
 
+    /// Unmaps and frees a page at `virtual_address` aligned down to the nearest page, as well as
+    /// empty parent pages. `free_child` indicates whether the child page itself should be freed,
+    /// rather than just simply being unmapped. `pages_left`, if provided, will be incremented
+    /// every time a page is freed.
+    pub fn unmapPage(
+        self: *UserPageMapper,
+        virtual_address: u64,
+        free_child: bool,
+        pages_left: ?*u64,
+    ) void {
+        const actual_virtual_address = virtual_address & 0x000FFFFFFFFFF000;
+        const current_address = self.page_table.getAddress();
+        _ = self.unmapPageInner(
+            virtual_address & 0x000FFFFFFFFFF000,
+            self.page_table.getAddress(),
+            0,
+            free_child,
+            pages_left,
+        );
+    }
+
+    /// Returns whether the page table was freed.
+    fn unmapPageInner(
+        self: *UserPageMapper,
+        virtual_address: u64,
+        current_address: u64,
+        level: usize,
+        free_child: bool,
+        pages_left: ?*u64,
+    ) bool {
+        const current_table = @intToPtr(*align(4096) PageTable, current_address);
+        const index = @truncate(
+            u9,
+            (level_masks[level] & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
+        );
+        const entry = current_address[index];
+        if (entry.isPresent()) {
+            if (level == 3) {
+                // Remove entry, free child page if applicable
+                current_address[index] = comptime PageTableEntry.fromU64(0);
+                if (free_child) {
+                    self.page_allocator.freePage(entry.getAddress());
+                    if (pages_left) |pages_left_ptr| pages_left_ptr.* += 1;
+                }
+            } else {
+                // Keep recursing
+                if (unmapPageInner(virtual_address, entry.getAddress(), level + 1, pages_left)) {
+                    // Inner page table was freed, remove entry
+                    current_address[index] = comptime PageTableEntry.fromU64(0);
+                }
+            }
+        }
+        // Check if page table is now empty and can be freed
+        const should_free_table = level > 0 and blk: for (current_table) |*table_entry| {
+            if (table_entry.__data != 0) break :blk false;
+        } else true;
+        if (should_free_table) {
+            self.page_allocator.freePage(current_address);
+            if (pages_left) |pages_left_ptr| pages_left_ptr.* += 1;
+        }
+        return should_free_table;
+    }
+
     /// Unmaps and frees `(size / 4096) + 1` pages starting at the given linear address.
-    pub fn unmapMem(self: *VirtualPageMapper, start_address: u64, size: usize) void {
+    pub fn asyncUnmapMem(
+        self: *UserPageMapper,
+        start_address: u64,
+        size: usize,
+        free_child: bool,
+        pages_left: ?*u64,
+    ) void {
         const actual_start_address = start_address & 0x000FFFFFFFFFF000;
-        const level_masks = [_]u64{
-            0xFF80_0000_0000,
-            0x007F_C000_0000,
-            0x0000_3FE0_0000,
-            0x0000_001F_F000,
-        };
         const num_pages = blk: {
             const lower_bound = std.mem.alignBackward(start_address, 4096);
             const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
             break :blk ((upper_bound - lower_bound) >> 12) + 1;
         };
+        const page_table_address = self.page_table.getAddress();
         outer: for (range(num_pages)) |_, page_i| {
             const virtual_address = actual_start_address + (page_i << 12);
-            var current_address = self.page_table.getAddress();
-            for (level_masks) |level_mask, i| {
-                const current_table = @intToPtr(*align(4096) PageTable, current_address);
-                const index = @truncate(
-                    u9,
-                    (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
-                );
-                const entry = current_table[index];
-                if (entry.isHugePage()) @panic("large pages not supported");
-                if (i == 3) {
-                    if (!entry.isPresent()) continue :outer;
-                    // Free page, remove entry
-                    self.page_allocator.freePage(entry.getAddress());
-                    current_table[index] = comptime PageTableEntry.fromU64(0);
-                } else {
-                    current_address = entry.getAddress();
-                }
-            }
-        }
-    }
-
-    /// Returns the flags for an address, or `null` if the address isn't mapped
-    pub fn getFlagsForAddress(
-        self: *const VirtualPageMapper,
-        virtual_address: u64,
-    ) ?PageTableEntry {
-        const level_masks = [_]u64{
-            0xFF80_0000_0000,
-            0x007F_C000_0000,
-            0x0000_3FE0_0000,
-            0x0000_001F_F000,
-        };
-        const page_address = virtual_address & 0xFFFFFFFFFFFFF000;
-        var current_address = self.page_table.getAddress();
-        var entry: PageTableEntry = undefined;
-        for (level_masks) |level_mask, i| {
-            const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
-            const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
-            const index = @truncate(
-                u9,
-                (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
+            _ = self.unmapPageInner(
+                virtual_address,
+                page_table_address,
+                0,
+                free_child,
+                pages_left,
             );
-            entry = current_table[index];
-            // logger.debug(
-            //     \\Found entry:
-            //     \\  - Address: 0x{x}
-            //     \\  - Present: {}
-            //     \\  - Writable: {}
-            //     \\  - User Accessable: {}
-            //     \\  - Huge Page: {}
-            //     \\  - Global: {}
-            //     \\  - No Execute: {}
-            //     , .{
-            //         entry.getAddress(),
-            //         entry.isPresent(),
-            //         entry.isWritable(),
-            //         entry.isUserAccessable(),
-            //         entry.isHugePage(),
-            //         entry.isGlobal(),
-            //         entry.isNoExecute(),
-            //     }
-            // );
-            // Return null if address not mapped
-            if (!entry.isPresent()) return null;
-            // Return immediately if entry is a huge page
-            if (entry.isHugePage()) return entry;
-            current_address = entry.getAddress();
+            // TODO Write a new inline `suspendIfOvertime` clock function
+            // TODO Rewrite `changeFlags` (below) as `asyncChangeFlags`
         }
-        return entry;
     }
 
-    // TODO Optimize by keeping count of number of pages done, stay at deepest level
     /// Sets the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Relaxes permissions for parent pages where necessary.
     pub fn changeFlags(
-        self: *VirtualPageMapper,
+        self: *UserPageMapper,
         start_address: u64,
         flags: u64,
         size: u64,
@@ -245,12 +300,6 @@ pub const VirtualPageMapper = struct {
             ~@as(u64, 1 << 63)
         else
             ~@as(u64, 0);
-        const level_masks = [_]u64{
-            0xFF80_0000_0000,
-            0x007F_C000_0000,
-            0x0000_3FE0_0000,
-            0x0000_001F_F000,
-        };
         const num_pages = blk: {
             const lower_bound = std.mem.alignBackward(start_address, 4096);
             const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
@@ -314,7 +363,7 @@ pub const VirtualPageMapper = struct {
     /// Relaxes the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Also relaxes permissions for parent pages where necessary.
     pub fn changeFlagsRelaxing(
-        self: *VirtualPageMapper,
+        self: *UserPageMapper,
         start_address: u64,
         flags: u64,
         size: u64,
@@ -326,12 +375,6 @@ pub const VirtualPageMapper = struct {
             ~@as(u64, 1 << 63)
         else
             ~@as(u64, 0);
-        const level_masks = [_]u64{
-            0xFF80_0000_0000,
-            0x007F_C000_0000,
-            0x0000_3FE0_0000,
-            0x0000_001F_F000,
-        };
         const num_pages = blk: {
             const lower_bound = std.mem.alignBackward(start_address, 4096);
             const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
@@ -379,7 +422,7 @@ pub const VirtualPageMapper = struct {
         }
     }
 
-    fn freePageTree(self: *VirtualPageMapper, node: PageTableEntry, level: usize) void {
+    fn freePageTree(self: *UserPageMapper, node: PageTableEntry, level: usize) void {
         if (!node.isPresent()) return;
         // TODO Add huge page support
         if (node.isHugePage()) @panic("huge page support unimplemented");

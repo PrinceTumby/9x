@@ -1,4 +1,7 @@
+const std = @import("std");
 const raspberry_pi = @import("../raspberry_pi.zig");
+
+const logger = std.log.scoped(.raspberry_pi_mmio);
 
 var base_address: usize = undefined;
 
@@ -42,6 +45,43 @@ pub const gpio = struct {
     pub inline fn writeRegister(register: Register, value: u32) void {
         const address = base_address + base_offset + @enumToInt(register);
         @intToPtr(*volatile u32, address).* = value;
+    }
+};
+
+pub const uart = struct {
+    pub var readByte: fn() u8 = undefined;
+    pub var writeByte: fn(byte: u8) void = undefined;
+
+    pub fn init(model: raspberry_pi.Model) void {
+        switch (model) {
+            .zero, .one => {
+                // Enable AUX UART
+                uart_aux.writeRegister(.enable, 1);
+                uart_aux.writeRegister(.mu_ier, 0);
+                uart_aux.writeRegister(.mu_cntl, 0);
+                uart_aux.writeRegister(.mu_lcr, 3);
+                uart_aux.writeRegister(.mu_mcr, 0);
+                uart_aux.writeRegister(.mu_ier, 0);
+                uart_aux.writeRegister(.mu_iir, 0xC6);
+                uart_aux.writeRegister(.mu_baud, 270);
+                var sel1 = gpio.readRegister(.gpf_sel1);
+                sel1 &= ~@as(u32, 7 << 12); // gpio14
+                sel1 |= 2 << 12;            // alt5
+                sel1 &= ~@as(u32, 7 << 15); // gpio15
+                sel1 |= 2 << 15;            // alt5
+                gpio.writeRegister(.gpf_sel1, sel1);
+                gpio.writeRegister(.gppud, 0);
+                delay(150);
+                gpio.writeRegister(.gppud_clk0, (1 << 14) | (1 << 15));
+                gpio.writeRegister(.gppud_clk0, 0);
+                uart_aux.writeRegister(.mu_cntl, 3);
+                // Setup functions
+                readByte = uart_aux.readByte;
+                writeByte = uart_aux.writeByte;
+            },
+            else => uart0.init(model),
+            // else => @panic("Unsupported pi model"),
+        }
     }
 };
 
@@ -91,95 +131,116 @@ pub const uart0 = struct {
         @intToPtr(*volatile u32, address).* = value;
     }
 
-    pub fn init(model: raspberry_pi.Model) void {
-        // Disable UARTs
-        writeRegister(.cr, 0);
-        uart_aux.writeRegister(.enable, 0);
-        // Set up clock for consistent divisor values
-        while (mailbox.isInputFull()) {}
-        const r = (@truncate(
-            u32,
-            @ptrToInt(&mailbox.uart_3mhz_message),
-        ) & ~@as(u32, 0xF)) | 8;
-        mailbox.writeRegister(.write, r);
-        while (mailbox.isOutputEmpty() or mailbox.readRegister(.read) != r) {}
-        // Map UART0 to GPIO pins
-        var pin_r = gpio.readRegister(.gpf_sel1);
-        // GPIO 14, GPIO 15
-        pin_r &= ~@as(u32, (7 << 12) | (7 << 15));
-        // Alt0
-        pin_r |= (4 << 12) | (4 << 15);
-        gpio.writeRegister(.gpf_sel1, pin_r);
-        // Enable pins 14 and 15
-        gpio.writeRegister(.gppud, 0);
-        delay(150);
-        gpio.writeRegister(.gppud_clk0, (1 << 14) | (1 << 15));
-        delay(150);
-        // Flush GPIO setup
-        gpio.writeRegister(.gppud_clk0, 0);
-        // Clear interrupts
-        writeRegister(.icr, 0x7FF);
-        // 115,200 baud
-        writeRegister(.ibrd, 2);
-        writeRegister(.fbrd, 0xB);
-        // 8n1
-        writeRegister(.lcrh, 0x3 << 5);
-        // Enable TX, RX, FIFO
-        writeRegister(.cr, 0x301);
-    }
-
     // pub fn init(model: raspberry_pi.Model) void {
-    //     // Disable UART0
+    //     // Disable UARTs
     //     writeRegister(.cr, 0);
-    //     // Disable UART1
     //     uart_aux.writeRegister(.enable, 0);
-    //     // Disable pull up/down for all GPIO pins and delay for 150 cycles
+    //     // Set up clock for consistent divisor values
+    //     while (mailbox.isInputFull()) {}
+    //     const r = (@truncate(
+    //         u32,
+    //         @ptrToInt(&mailbox.uart_3mhz_message),
+    //     ) & ~@as(u32, 0xF)) | 8;
+    //     mailbox.writeRegister(.write, r);
+    //     while (mailbox.isOutputEmpty() or mailbox.readRegister(.read) != r) {}
+    //     // Map UART0 to GPIO pins
+    //     var pin_r = gpio.readRegister(.gpf_sel1);
+    //     // GPIO 14, GPIO 15
+    //     pin_r &= ~@as(u32, (7 << 12) | (7 << 15));
+    //     // Alt0
+    //     pin_r |= (4 << 12) | (4 << 15);
+    //     gpio.writeRegister(.gpf_sel1, pin_r);
+    //     // Enable pins 14 and 15
     //     gpio.writeRegister(.gppud, 0);
     //     delay(150);
-    //     // Disable pull up/down for pins 14 and 15, delay for 150 cycles
     //     gpio.writeRegister(.gppud_clk0, (1 << 14) | (1 << 15));
     //     delay(150);
-    //     // Write 0 to GPPUDCLK0 to make it take effect
+    //     // Flush GPIO setup
     //     gpio.writeRegister(.gppud_clk0, 0);
-    //     // Clear pending interrupts
+    //     // Clear interrupts
     //     writeRegister(.icr, 0x7FF);
-    //     // Set integer and fractional part of baud rate
-    //     // Divider = UART_CLOCK/(16 * Baud)
-    //     // Fraction part register = (Fractional part * 64) + 0.5
-    //     // Baud = 115200
-    //     // For Raspi 3 and 4 the UART_CLOCK is dependent on system clock by default.
-    //     // Set it to 3Mhz so we can consistently set baud rate
-    //     if (model == .three or model == .four) {
-    //         // UART_CLOCK = 30000000
-    //         const r = (@truncate(
-    //             u32,
-    //             @ptrToInt(&mailbox.uart_3mhz_message),
-    //         ) & ~@as(u32, 0xF)) | 8;
-    //         // Wait until we can talk to the VideoCore
-    //         while (mailbox.isInputFull()) {}
-    //         // Send our message to property channel and wait for response
-    //         mailbox.writeRegister(.write, r);
-    //         while (mailbox.isOutputEmpty() or mailbox.readRegister(.read) != r) {}
-    //     }
-    //     // Divider = 3000000 / (16 * 115200) = 1.67 = ~1
-    //     writeRegister(.ibrd, 1);
-    //     // Fractional part register = (.627 * 64) + 0.5 = 40.6 = ~40
-    //     writeRegister(.fbrd, 40);
-    //     // Enable FIFO set 8 data bits, 1 stop bits, no parity
-    //     writeRegister(.lcrh, (1 << 4) | (1 << 5) | (1 << 6));
-    //     // Mask all interrupts
-    //     writeRegister(.imsc, 0x7F2);
-    //     // Enable UART0, receive and transfer parts
-    //     writeRegister(.cr, (1 << 0) | (1 << 8) | (1 << 9));
+    //     // 115,200 baud
+    //     writeRegister(.ibrd, 2);
+    //     writeRegister(.fbrd, 0xB);
+    //     // 8n1
+    //     writeRegister(.lcrh, 0x3 << 5);
+    //     // Enable TX, RX, FIFO
+    //     writeRegister(.cr, 0x301);
     // }
+
+    pub fn init(model: raspberry_pi.Model) void {
+        // Disable UART0
+        writeRegister(.cr, 0);
+        // Disable UART1
+        uart_aux.writeRegister(.enable, 0);
+        // Disable pull up/down for all GPIO pins and delay for 150 cycles
+        gpio.writeRegister(.gppud, 0);
+        delay(150);
+        // Disable pull up/down for pins 14 and 15, delay for 150 cycles
+        gpio.writeRegister(.gppud_clk0, (1 << 14) | (1 << 15));
+        delay(150);
+        // Write 0 to GPPUDCLK0 to make it take effect
+        gpio.writeRegister(.gppud_clk0, 0);
+        // Clear pending interrupts
+        writeRegister(.icr, 0x7FF);
+        // Set integer and fractional part of baud rate
+        // Divider = UART_CLOCK/(16 * Baud)
+        // Fraction part register = (Fractional part * 64) + 0.5
+        // Baud = 115200
+        // For Raspi 3 and 4 the UART_CLOCK is dependent on system clock by default.
+        // Set it to 3Mhz so we can consistently set baud rate
+        if (model == .three or model == .four) {
+            // UART_CLOCK = 30000000
+            const r = (@truncate(
+                u32,
+                @ptrToInt(&mailbox.uart_3mhz_message),
+            ) & ~@as(u32, 0xF)) | 8;
+            // Wait until we can talk to the VideoCore
+            while (mailbox.isInputFull()) {}
+            // Send our message to property channel and wait for response
+            mailbox.writeRegister(.write, r);
+            while (mailbox.isOutputEmpty() or mailbox.readRegister(.read) != r) {}
+        }
+        // Divider = 3000000 / (16 * 115200) = 1.67 = ~1
+        writeRegister(.ibrd, 1);
+        // Fractional part register = (.627 * 64) + 0.5 = 40.6 = ~40
+        writeRegister(.fbrd, 40);
+        // Enable FIFO set 8 data bits, 1 stop bits, no parity
+        writeRegister(.lcrh, (1 << 4) | (1 << 5) | (1 << 6));
+        // Mask all interrupts
+        writeRegister(.imsc, 0x7F2);
+        // Enable UART0, receive and transfer parts
+        writeRegister(.cr, (1 << 0) | (1 << 8) | (1 << 9));
+    }
 };
 
 pub const uart_aux = struct {
     const base_offset = registers_base_offset + 0x15000;
 
     pub const Register = enum(usize) {
-        enable = 0x4,
+        enable = 0x04,
+        mu_io = 0x40,
+        mu_ier = 0x44,
+        mu_iir = 0x48,
+        mu_lcr = 0x4c,
+        mu_mcr = 0x50,
+        mu_lsr = 0x54,
+        mu_msr = 0x58,
+        mu_scratch = 0x5c,
+        mu_cntl = 0x60,
+        mu_stat = 0x64,
+        mu_baud = 0x68,
     };
+
+    pub fn readByte() u8 {
+        while (readRegister(.mu_lsr) & 0x01 == 0) asm volatile ("nop");
+        return @truncate(u8, readRegister(.mu_io));
+    }
+
+    pub fn writeByte(byte: u8) void {
+        while (readRegister(.mu_lsr) & 0x20 == 0) asm volatile ("nop");
+        writeRegister(.mu_io, byte);
+    }
 
     pub inline fn readRegister(register: Register) u32 {
         const address = base_address + base_offset + @enumToInt(register);
@@ -214,31 +275,33 @@ pub const mailbox = struct {
         leds_interface = 4,
         buttons_interface = 5,
         touch_screen_interface = 6,
-    };
-
-    pub const uart_3mhz_message align(16) = [9]u32{
-        8 * 4,
-        0,
-        0x38002,
-        12,
-        8,
-        2,
-        4000000,
-        0,
-        0,
+        arm_vc_property_tags = 8,
+        // vc_arm_property_tags = 9,
     };
 
     // pub const uart_3mhz_message align(16) = [9]u32{
-    //     9 * 4,
+    //     8 * 4,
     //     0,
     //     0x38002,
     //     12,
     //     8,
     //     2,
-    //     3000000,
+    //     4000000,
     //     0,
     //     0,
     // };
+
+    pub const uart_3mhz_message align(16) = [9]u32{
+        9 * 4,
+        0,
+        0x38002,
+        12,
+        8,
+        2,
+        3000000,
+        0,
+        0,
+    };
 
     // Raw register access functions
 
@@ -253,12 +316,23 @@ pub const mailbox = struct {
     }
 
     pub inline fn memoryBarrier() void {
+        // asm volatile (
+        //     \\mov r3, #0                    // Zero out read register
+        //     \\mcr p15, 0, r3, c7, c5, 0     // Invalidate instruction cache
+        //     \\mcr p15, 0, r3, c7, c5, 6     // Invalidate BTB
+        //     \\mcr p15, 0, r3, c7, c10, 4    // Drain write buffer
+        //     \\mcr p15, 0, r3, c7, c5, 4     // Prefetch flush
+        //     :
+        //     :
+        //     : "r3", "memory"
+        // );
         asm volatile (
             \\mov r3, #0                    // Zero out read register
-            \\mcr p15, 0, r3, c7, c5, 0     // Invalidate instruction cache
-            \\mcr p15, 0, r3, c7, c5, 6     // Invalidate BTB
-            \\mcr p15, 0, r3, c7, c10, 4    // Drain write buffer
-            \\mcr p15, 0, r3, c7, c5, 4     // Prefetch flush
+            \\mcr p15, 0, r3, c7, c6, 0     // Invalidate entire data cache
+            \\mcr p15, 0, r3, c7, c10, 0    // Clean entire data cache
+            \\mcr p15, 0, r3, c7, c14, 0    // Clean and invalidate entire data cache
+            \\mcr p15, 0, r3, c7, c10, 4    // Data synchronisation barrier
+            \\mcr p15, 0, r3, c7, c10, 5    // Data memory barrier
             :
             :
             : "r3", "memory"
@@ -306,11 +380,8 @@ pub const mailbox = struct {
         pub fn init(
             width: u32,
             height: u32,
-            comptime bpp: u32,
+            bpp: u32,
         ) MailboxMessage {
-            comptime {
-                if (bpp != 24) @compileError("Only 24 is currently supported for BPP");
-            }
             var message align(16) = MailboxMessage{
                 .display_width = width,
                 .display_height = height,
@@ -324,10 +395,190 @@ pub const mailbox = struct {
                 waitForOutputMessage();
                 memoryBarrier();
                 const response = readRegister(.read);
-                if ((response & 0xF) == 0x1) break;
+                if ((response & 0xF) == 1) break;
             }
             return message;
         }
+    };
+
+    pub const arm_vc_property_tags = struct {
+        pub fn TagBuffer(comptime TagsStruct: type) type {
+            return extern struct {
+                /// Size of the entire buffer, includes end tag and padding,
+                size: u32 = std.mem.alignForward(@sizeOf(Self), @alignOf(Self)),
+                code: BufferRequestCode = .process_request,
+                tags: TagsStruct,
+                end_tag: u32 = 0,
+
+                const Self = @This();
+
+                pub fn processBlocking(self: *align(16) Self) void {
+                    writeToChannelBlocking(.arm_vc_property_tags, @ptrToInt(self));
+                    memoryBarrier();
+                    while (true) {
+                        waitForOutputMessage();
+                        memoryBarrier();
+                        const response = readRegister(.read);
+                        if ((response & 0xF) == 8) break;
+                    }
+                }
+            };
+        }
+
+        pub fn createTagBuffer(tags: anytype) TagBuffer(@TypeOf(tags)) {
+            return TagBuffer(@TypeOf(tags)){
+                .tags = tags,
+            };
+        }
+
+        pub const BufferRequestCode = enum(u32) {
+            // Request codes
+            process_request = 0x00000000,
+            // Response codes
+            request_successful = 0x80000000,
+            parsing_error = 0x80000001,
+            // Reserved values
+            _,
+        };
+
+        pub const FramebufferTags = extern struct {
+            allocate: tag.framebuffer.Allocate = .{
+                .alignment_or_framebuffer_base = 4,
+            },
+            phys_dims: tag.framebuffer.SetPhysicalDims,
+            virt_dims: tag.framebuffer.SetVirtualDims,
+            depth: tag.framebuffer.SetDepth,
+            pixel_order: tag.framebuffer.SetPixelOrder = .{
+                .order = .bgr,
+            },
+            alpha_mode: tag.framebuffer.SetAlphaMode = .{
+                .mode = .ignored,
+            },
+            pitch: tag.framebuffer.GetPitch = .{},
+            virtual_offset: tag.framebuffer.SetVirtualOffset = .{
+                .x = 0,
+                .y = 0,
+            },
+            overscan: tag.framebuffer.SetOverscan = .{
+                .top = 0,
+                .bottom = 0,
+                .left = 0,
+                .right = 0,
+            },
+        };
+
+        pub fn initFramebuffer(width: u32, height: u32, bpp: u32) !FramebufferTags {
+            var framebuffer_tag_buffer align(16) = createTagBuffer(FramebufferTags{
+                .phys_dims = .{
+                    .width = width,
+                    .height = height,
+                },
+                .virt_dims = .{
+                    .width = width,
+                    .height = height,
+                },
+                .depth = .{ .bpp = 32 },
+            });
+            framebuffer_tag_buffer.processBlocking();
+            return switch (framebuffer_tag_buffer.code) {
+                .request_successful => framebuffer_tag_buffer.tags,
+                .parsing_error => error.ParsingError,
+                else => @panic("unexpected framebuffer response code"),
+            };
+        }
+
+        pub const tag = struct {
+            pub const framebuffer = struct {
+                pub const Allocate = extern struct {
+                    identifier: u32 = 0x00040001,
+                    value_buffer_size: u32 = 8,
+                    value_length_and_code: u32 = 0,
+                    alignment_or_framebuffer_base: u32,
+                    framebuffer_size: u32 = 0,
+                };
+
+                pub const Release = extern struct {
+                    identifier: u32 = 0x00048001,
+                    value_buffer_size: u32 = 0,
+                    value_length_and_code: u32 = 0,
+                };
+
+                pub const SetPhysicalDims = extern struct {
+                    identifier: u32 = 0x00048003,
+                    value_buffer_size: u32 = 8,
+                    value_length_and_code: u32 = 0,
+                    width: u32,
+                    height: u32,
+                };
+
+                pub const SetVirtualDims = extern struct {
+                    identifier: u32 = 0x00048004,
+                    value_buffer_size: u32 = 8,
+                    value_length_and_code: u32 = 0,
+                    width: u32,
+                    height: u32,
+                };
+
+                pub const SetDepth = extern struct {
+                    identifier: u32 = 0x00048005,
+                    value_buffer_size: u32 = 4,
+                    value_length_and_code: u32 = 0,
+                    bpp: u32,
+                };
+
+                pub const PixelOrder = enum(u32) {
+                    bgr = 0,
+                    rgb = 1,
+                    _,
+                };
+
+                pub const SetPixelOrder = extern struct {
+                    identifier: u32 = 0x00048006,
+                    value_buffer_size: u32 = 4,
+                    value_length_and_code: u32 = 0,
+                    order: PixelOrder,
+                };
+
+                pub const AlphaMode = enum(u32) {
+                    enabled = 0,
+                    reversed = 1,
+                    ignored = 2,
+                    _,
+                };
+
+                pub const SetAlphaMode = extern struct {
+                    identifier: u32 = 0x00048007,
+                    value_buffer_size: u32 = 4,
+                    value_length_and_code: u32 = 0,
+                    mode: AlphaMode,
+                };
+
+                pub const GetPitch = extern struct {
+                    identifier: u32 = 0x00048008,
+                    value_buffer_size: u32 = 4,
+                    value_length_and_code: u32 = 0,
+                    pitch: u32 = 0,
+                };
+
+                pub const SetVirtualOffset = extern struct {
+                    identifier: u32 = 0x00048009,
+                    value_buffer_size: u32 = 8,
+                    value_length_and_code: u32 = 0,
+                    x: u32,
+                    y: u32,
+                };
+
+                pub const SetOverscan = extern struct {
+                    identifier: u32 = 0x0004800A,
+                    value_buffer_size: u32 = 16,
+                    value_length_and_code: u32 = 0,
+                    top: u32,
+                    bottom: u32,
+                    left: u32,
+                    right: u32,
+                };
+            };
+        };
     };
 };
 

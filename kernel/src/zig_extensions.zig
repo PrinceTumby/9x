@@ -1,7 +1,12 @@
+// TODO Turn this into a seperate package
 pub const Interface = @import("zig_extensions/Interface.zig");
 pub const overridable_properties = @import("zig_extensions/overridable_properties.zig");
 
 const std = @import("std");
+
+pub fn range(len: usize) []const void {
+    return @as([*]void, undefined)[0..len];
+}
 
 pub fn comptimeFmt(
     comptime buf_extra_len: usize,
@@ -47,9 +52,7 @@ pub fn BoundedArray(comptime T: type, comptime capacity: comptime_int) type {
 
         const Self = @This();
 
-        pub const Error = error {
-            OutOfSpace,
-        };
+        pub const Error = error{OutOfSpace};
 
         pub fn append(self: *Self, item: T) Error!void {
             if (self.len >= capacity) return error.OutOfSpace;

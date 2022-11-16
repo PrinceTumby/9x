@@ -139,6 +139,8 @@ syscallSemiKernelBody:
 
 defineZigSyscall setBreakSyscall, $SystemCall.set_break
 defineZigSyscall moveBreakSyscall, $SystemCall.move_break
+defineZigSyscall mapMemSyscall, $SystemCall.map_mem
+defineZigSyscall unmapMemSyscall, $SystemCall.unmap_mem
 defineZigSyscall debugSyscall, $SystemCall.debug
 
 // .type debugSyscall, @function

@@ -9,6 +9,11 @@ const multiboot2_builder = @import("../../../../boot/multiboot2/build.zig");
 pub fn build(b: *Builder) void {
     const build_mode = b.standardReleaseOptions();
 
+    // // Testing
+    // const test_build_step = b.step("test", "Runs all kernel tests");
+    // const test_step = b.addTest("src/main.zig");
+    // test_build_step.dependOn(&test_step.step);
+
     // ACPICA library
     const patched_acpica_files = comptime blk: {
         var patched_files = acpica_files;
@@ -17,6 +22,7 @@ pub fn build(b: *Builder) void {
         }
         break :blk patched_files;
     };
+    // TODO Make this change based on host operating system
     const acpica_library = b.addSystemCommand(&[_][]const u8{
         "wsl",
         "ls",

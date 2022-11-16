@@ -4,11 +4,12 @@ const std = @import("std");
 const root = @import("root");
 const smp = root.smp;
 const page_allocator = root.arch.page_allocation.page_allocator_ptr;
+const range = root.zig_extensions.range;
 
 const psf_magic = 0x864ab572;
 const psf_version = 0x0;
 
-const blank_char_8_16: [16]u8 = [1]u8 {0} ** 16;
+const blank_char_8_16: [16]u8 = [1]u8{0} ** 16;
 
 const PSFHeader = packed struct {
     magic: u32 = psf_magic,
@@ -48,7 +49,7 @@ pub const Font = struct {
         if (index_end >= self.font_data.len) {
             return &blank_char_8_16;
         }
-        return self.font_data[index_start .. index_end];
+        return self.font_data[index_start..index_end];
     }
 };
 
@@ -165,8 +166,7 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                         );
                     } else {
                         const char_bitmap = self.font.getCharacter(char.char);
-                        var line_i: u8 = 0;
-                        while (line_i < self.font.height) : (line_i += 1) {
+                        for (range(self.font.height)) |_, line_i| {
                             var line = char_bitmap[line_i];
                             comptime var bit: u8 = 0;
                             inline while (bit < 8) : (bit += 1) {
@@ -179,7 +179,7 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                                 const colour = foreground + background;
                                 self.framebuffer.set(
                                     x_pos * self.font.width + (7 - bit),
-                                    y_pos * self.font.height + line_i,
+                                    y_pos * self.font.height + @intCast(u8, line_i),
                                     colour,
                                 );
                             }
@@ -223,7 +223,10 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                 // Scroll display
                 var src_pos: usize = self.width;
                 var dest_pos: usize = 0;
-                while (src_pos < self.text_buffer.len) : ({src_pos += 1; dest_pos += 1;}) {
+                while (src_pos < self.text_buffer.len) : ({
+                    src_pos += 1;
+                    dest_pos += 1;
+                }) {
                     self.text_buffer[dest_pos] = self.text_buffer[src_pos];
                 }
                 // Clear bottom
@@ -275,7 +278,10 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                 switch (self.current_state) {
                     .text => switch (char) {
                         '\x1B' => self.current_state = .escape_1,
-                        '\n' => {self.newLine(lock); self.cursor_x = 0;},
+                        '\n' => {
+                            self.newLine(lock);
+                            self.cursor_x = 0;
+                        },
                         '\r' => self.cursor_x = 0,
                         '\t' => self.cursor_x = (self.cursor_x % 8 + 1) * 8,
                         else => {
@@ -298,15 +304,18 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                         else => self.current_state = .text,
                     },
                     .escape_2 => switch (char) {
-                        '0'...'9' => self.current_state = .{.first_argument = char - 48},
-                        ';' => self.current_state = .{.first_argument_end = 0},
-                        'm' => {self.resetAttributes(lock); self.current_state = .text;},
+                        '0'...'9' => self.current_state = .{ .first_argument = char - 48 },
+                        ';' => self.current_state = .{ .first_argument_end = 0 },
+                        'm' => {
+                            self.resetAttributes(lock);
+                            self.current_state = .text;
+                        },
                         else => self.current_state = .text,
                     },
                     .first_argument => |arg| switch (char) {
                         '0'...'9' => self.current_state =
-                            .{.first_argument = arg * 10 + (char - 48)},
-                        ';' => self.current_state = .{.first_argument_end = arg},
+                            .{ .first_argument = arg * 10 + (char - 48) },
+                        ';' => self.current_state = .{ .first_argument_end = arg },
                         'm' => {
                             switch (arg) {
                                 0 => self.resetAttributes(lock),
@@ -321,27 +330,27 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                         else => self.current_state = .text,
                     },
                     .first_argument_end => |arg| switch (char) {
-                        '0'...'9' => self.current_state = .{.second_argument = .{arg, char - 48}},
-                        ';' => self.current_state = .{.second_argument_end = .{arg, 0}},
+                        '0'...'9' => self.current_state = .{ .second_argument = .{ arg, char - 48 } },
+                        ';' => self.current_state = .{ .second_argument_end = .{ arg, 0 } },
                         else => self.current_state = .text,
                     },
                     .second_argument => |args| switch (char) {
                         '0'...'9' => self.current_state =
-                            .{.second_argument = .{args[0], args[1] * 10 + (char - 48)}},
-                        ';' => self.current_state = .{.second_argument_end = args},
+                            .{ .second_argument = .{ args[0], args[1] * 10 + (char - 48) } },
+                        ';' => self.current_state = .{ .second_argument_end = args },
                         else => self.current_state = .text,
                     },
                     .second_argument_end => |args| switch (char) {
                         '0'...'9' => self.current_state =
-                            .{.third_argument = .{args[0], args[1], char - 48}},
+                            .{ .third_argument = .{ args[0], args[1], char - 48 } },
                         ';' => self.current_state =
-                            .{.third_argument_end = .{args[0], args[1], 0}},
+                            .{ .third_argument_end = .{ args[0], args[1], 0 } },
                         else => self.current_state = .text,
                     },
                     .third_argument => |args| switch (char) {
                         '0'...'9' => self.current_state =
-                            .{.third_argument = .{args[0], args[1], args[2] * 10 + (char - 48)}},
-                        ';' => self.current_state = .{.third_argument_end = args},
+                            .{ .third_argument = .{ args[0], args[1], args[2] * 10 + (char - 48) } },
+                        ';' => self.current_state = .{ .third_argument_end = args },
                         'm' => {
                             if ((args[0] != 38 and args[0] != 48) or args[1] != 5) {
                                 self.current_state = .text;
@@ -381,27 +390,23 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
                     },
                     .third_argument_end => |args| switch (char) {
                         '0'...'9' => self.current_state =
-                            .{.fourth_argument = .{args[0], args[1], args[2], char - 48}},
+                            .{ .fourth_argument = .{ args[0], args[1], args[2], char - 48 } },
                         ';' => self.current_state =
-                            .{.fourth_argument_end = .{args[0], args[1], args[2], 0}},
+                            .{ .fourth_argument_end = .{ args[0], args[1], args[2], 0 } },
                         else => self.current_state = .text,
                     },
                     .fourth_argument => |args| switch (char) {
-                        '0'...'9' => self.current_state = .{.fourth_argument =
-                            .{args[0], args[1], args[2], args[3] * 10 + (char - 48)}
-                        },
-                        ';' => self.current_state = .{.fourth_argument_end = args},
+                        '0'...'9' => self.current_state = .{ .fourth_argument = .{ args[0], args[1], args[2], args[3] * 10 + (char - 48) } },
+                        ';' => self.current_state = .{ .fourth_argument_end = args },
                         else => self.current_state = .text,
                     },
                     .fourth_argument_end => |args| switch (char) {
                         '0'...'9' => self.current_state =
-                            .{.fifth_argument = .{args[0], args[1], args[2], args[3], char - 48}},
+                            .{ .fifth_argument = .{ args[0], args[1], args[2], args[3], char - 48 } },
                         else => self.current_state = .text,
                     },
                     .fifth_argument => |args| switch (char) {
-                        '0'...'9' => self.current_state = .{.fifth_argument =
-                            .{args[0], args[1], args[2], args[3], args[4] * 10 + (char - 48)}
-                        },
+                        '0'...'9' => self.current_state = .{ .fifth_argument = .{ args[0], args[1], args[2], args[3], args[4] * 10 + (char - 48) } },
                         'm' => {
                             if ((args[0] != 38 and args[0] != 48) or args[1] != 2) {
                                 self.current_state = .text;
@@ -424,7 +429,7 @@ pub fn TextDisplay(comptime FrameBuffer: type) type {
             }
             self.render(lock);
         }
-        
+
         pub fn writeLn(self: *Self, text: []const u8) void {
             const lock = self.lock.acquire();
             defer lock.release();

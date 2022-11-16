@@ -52,11 +52,31 @@ extern fn send_mail(
 ) !void;
 
 const MailInfo = extern struct {
-    message: [16]u8,
-    data: [256 - 16]u8,
+    data: [255]u8,
+    data_len: u8,
 };
 
 const mail_flags = struct {
+    pub const fail_instead_of_blocking = 0x1;
+    // pub const wait_for_reply = 0x2;
+};
+}}}
+
+== send_box - IPC ==
+
+{{{zig
+extern fn send_box(
+    target_process_id: usize,
+    info: *const BoxInfo,
+    flags: u32,
+) !void;
+
+const BoxInfo = extern struct {
+    data_len: usize,
+    data_ptr: *align(page_size) const [page_size]u8,
+};
+
+const box_flags = struct {
     pub const fail_instead_of_blocking = 0x1;
     // pub const wait_for_reply = 0x2;
 };
@@ -68,9 +88,9 @@ const mail_flags = struct {
 extern fn send_package(target_process_id: usize, info: *const PackageInfo, flags: u32) !void;
 
 const PackageInfo = extern struct {
-    message: [16]u8,
+    data_len: usize,
     data_ptr: [*]align(page_size) const [page_size]u8,
-    data_size: usize,
+    data_num_pages: usize,
 };
 }}}
 
@@ -80,7 +100,7 @@ const PackageInfo = extern struct {
 extern fn send_shipment(target_process_id: usize, info: *const ShipmentInfo, flags: u32) !void;
 
 const ShipmentInfo = extern struct {
-    message: [16]u8,
+    data_len: usize,
     page_list_ptr: [*]const *align(page_size) const [page_size]u8,
     page_list_num_entries: usize,
 };

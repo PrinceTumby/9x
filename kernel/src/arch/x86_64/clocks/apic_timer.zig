@@ -70,8 +70,8 @@ pub fn calibrate() void {
     const time_slept = clock_manager.calibrationSleep(startTimer);
     const end_ticks = local_apic.readRegister(LocalApic.registers.CurrentCountRegister);
     const num_ticks: usize = 0xFFFFFFFF - end_ticks;
-    local_apic_tls.timer_ms_numerator = num_ticks;
-    local_apic_tls.timer_ms_denominator = time_slept / 1000;
+    local_apic_tls.timer_us_numerator = num_ticks;
+    local_apic_tls.timer_us_denominator = time_slept;
 }
 
 pub fn setup() !void {
@@ -105,12 +105,13 @@ pub fn setInterruptType(interrupt_type: clock_manager.InterruptType) void {
 
 /// Sleeps for the number of milliseconds requested.
 pub fn sleepMs(time_in_ms: u32) void {
+    const time_in_us = @as(usize, time_in_ms) * 1000;
     // Calculate number of APIC timer ticks
     const local_apic_tls = tls.getThreadLocalVariable("local_apic");
     const local_apic = local_apic_tls.apic;
-    const numerator = local_apic_tls.timer_ms_numerator;
-    const denominator = local_apic_tls.timer_ms_denominator;
-    const time_in_apic_ticks = @truncate(u32, (numerator * time_in_ms) / denominator);
+    const numerator = local_apic_tls.timer_us_numerator;
+    const denominator = local_apic_tls.timer_us_denominator;
+    const time_in_apic_ticks = @truncate(u32, (numerator * time_in_us) / denominator);
     // Enable timer interrupts, set one shot mode
     const LvtTimerRegister = LocalApic.registers.LvtTimerRegister;
     var timer_lvt = LocalApic.TimerLvt.fromU32(local_apic.readRegister(LvtTimerRegister));
@@ -130,12 +131,13 @@ pub fn sleepMs(time_in_ms: u32) void {
 // Countdown functions
 
 pub fn startCountdown(time_in_ms: u32) void {
+    const time_in_us = @as(usize, time_in_ms) * 1000;
     // Calculate number of APIC timer ticks
     const local_apic_tls = tls.getThreadLocalVariable("local_apic");
     const local_apic = local_apic_tls.apic;
-    const numerator = local_apic_tls.timer_ms_numerator;
-    const denominator = local_apic_tls.timer_ms_denominator;
-    const time_in_apic_ticks = @truncate(u32, (numerator * time_in_ms) / denominator);
+    const numerator = local_apic_tls.timer_us_numerator;
+    const denominator = local_apic_tls.timer_us_denominator;
+    const time_in_apic_ticks = @truncate(u32, (numerator * time_in_us) / denominator);
     // Enable timer interrupts, set one shot mode
     const LvtTimerRegister = LocalApic.registers.LvtTimerRegister;
     var timer_lvt = LocalApic.TimerLvt.fromU32(local_apic.readRegister(LvtTimerRegister));
@@ -148,18 +150,19 @@ pub fn startCountdown(time_in_ms: u32) void {
 }
 
 pub fn getCountdownRemainingTime() u32 {
-    // Read current count, convert ticks to milliseconds
+    // Read current count, convert ticks to microseconds, then to milliseconds
     const local_apic_tls = tls.getThreadLocalVariable("local_apic");
     const local_apic = local_apic_tls.apic;
-    const numerator = local_apic_tls.timer_ms_numerator;
-    const denominator = local_apic_tls.timer_ms_denominator;
+    const numerator = local_apic_tls.timer_us_numerator;
+    const denominator = local_apic_tls.timer_us_denominator;
     const time_in_apic_ticks = local_apic.readRegister(LocalApic.registers.CurrentCountRegister);
-    return @truncate(u32, (time_in_apic_ticks * denominator) / numerator);
+    return @truncate(u32, (time_in_apic_ticks * denominator) / numerator / 1000);
 }
 
 pub fn getHasCountdownEnded() bool {
-    const local_apic_tls = tls.getThreadLocalVariable("local_apic");
-    return local_apic_tls.interrupt_received;
+    return getCountdownRemainingTime() == 0;
+    // const local_apic_tls = tls.getThreadLocalVariable("local_apic");
+    // return local_apic_tls.interrupt_received;
 }
 
 pub fn stopCountdown() void {

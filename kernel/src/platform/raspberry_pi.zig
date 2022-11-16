@@ -15,7 +15,7 @@ pub const Model = enum {
 
 pub const loggers = struct {
     pub const logger_list = .{
-        serial.Writer(mmio.uart0){},
+        serial.Writer(mmio.uart){},
     };
     pub var logger_enabled_list = [_]bool{
         false,

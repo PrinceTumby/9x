@@ -5,7 +5,7 @@ const asmSymbolFmt = root.zig_extensions.asmSymbolFmt;
 
 const logger = std.log.scoped(.x86_64_syscall);
 
-pub const Error = error {
+pub const Error = error{
     InvalidArgument,
     OutOfMemory,
 };
@@ -36,6 +36,13 @@ pub extern fn syscallEntrypoint() callconv(.Naked) void;
 pub const SystemCall = enum(u64) {
     set_break,
     move_break,
+    // TODO Implement map_mem and unmap_mem, probably want a VMA scheme so we
+    // allocate random pages starting from the bottom of the stack growing
+    // down towards the heap.
+    // Library level heap allocators will likely request pages at specific
+    // addresses so we don't need to worry about those.
+    map_mem,
+    unmap_mem,
     debug,
     _,
 
@@ -52,8 +59,9 @@ pub fn handleSystemCall() void {
     const current_process = &tls_ptr.current_process;
     const process_registers = &tls_ptr.current_process.registers;
     switch (@intToEnum(SystemCall, process_registers.rax)) {
-        .set_break => process_registers.rax = setBreak(process_registers.rdi)
-            catch |err| ErrorValue.fromErrNeg(err),
+        .set_break => process_registers.rax = setBreak(process_registers.rdi) catch |err| blk: {
+            break :blk ErrorValue.fromErrNeg(err);
+        },
         .move_break => {
             const previous_break = current_process.program_break_location;
             const requested_move_delta = process_registers.rdi;
@@ -68,6 +76,16 @@ pub fn handleSystemCall() void {
                 return;
             };
             process_registers.rax = previous_break;
+        },
+        .map_mem => {
+            const start = process_registers.rdi;
+            const size = process_registers.rsi;
+            if (size == 0) {
+                process_registers.rax = ErrorValue.fromErrNeg(error.InvalidArgument);
+                return;
+            }
+            const upper_bound = start +% size -% 1;
+            tls_ptr.kernel_main_process.page_allocator_ptr.loadAddressSpace();
         },
         .debug => {
             const message_ptr = @intToPtr([*]const u8, process_registers.rdi);

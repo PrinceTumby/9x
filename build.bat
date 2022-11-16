@@ -299,6 +299,7 @@ if %errorlevel% NEQ 0 (
 cd ..
 llvm-objcopy --only-keep-debug kernel\out\kernel_unstripped dev\kernel.sym
 llvm-objcopy kernel\out\kernel -O binary out\kernel.img
+llvm-objcopy kernel\out\kernel -O ihex out\kernel.hex
 :: Image root building
 echo - Building image...
 cd out
@@ -309,7 +310,7 @@ copy ..\misc\raspberry_pi\config.txt imgroot\boot 1>NUL
 copy ..\misc\raspberry_pi\firmware\bootcode.bin imgroot\boot 1>NUL
 copy ..\misc\raspberry_pi\firmware\fixup.dat imgroot\boot 1>NUL
 copy ..\misc\raspberry_pi\firmware\start.elf imgroot\boot 1>NUL
-wsl ~/.local/bin/genimage --config ../misc/raspberry_pi/genimage.cfg --root imgroot
+:: wsl ~/.local/bin/genimage --config ../misc/raspberry_pi/genimage.cfg --root imgroot
 cd ..
 copy out\images\9x.img . 1>NUL
 echo Done!

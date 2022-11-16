@@ -4,7 +4,6 @@
 - Allocate space for framebuffer in upper memory, map near start of kernel
 - Write menu configuration tool
 - Add more configuration options to disable certain features
-- Change 'config' to 'build_options'
 - Implement kernel argument parsing
 - Implement platform feature detection
 - Change 'out' folders to 'zig-out'

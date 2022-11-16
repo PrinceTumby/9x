@@ -7,6 +7,7 @@ pub const pit = @import("clocks/pit.zig");
 pub const apic_timer = @import("clocks/apic_timer.zig");
 pub const cmos = @import("clocks/cmos.zig");
 pub const rtc = @import("clocks/rtc.zig");
+pub const tsc = @import("clocks/tsc.zig");
 
 pub const Clock = enum {
     Pit,
@@ -29,8 +30,7 @@ const clock_field_map = std.ComptimeStringMap(Clock, .{
 
 pub var calibration_timers = struct {
     hpet: bool = false,
-    /// Only ever true if the exact APIC timer
-    /// tick rate is able to be found via CPUID
+    // Only ever true if the exact APIC timer tick rate is able to be found via CPUID
     apic: bool = false,
     pit: bool = false,
     rtc: bool = true,
@@ -53,28 +53,30 @@ pub var counters = struct {
     rtc: bool = false,
 }{};
 
-pub var calibrationSleep: fn(startTimer: fn() void) u32 = dummyCalibrationSleep;
+pub var calibrationSleep: fn (startTimer: fn () void) u32 = dummyCalibrationSleep;
 
 pub const InterruptType = enum {
     Sleep,
     ContextSwitch,
 };
 
-pub var setInterruptType: fn(interrupt_type: InterruptType) void = dummySetInterruptType;
+// TODO Change unit of time from milliseconds to microseconds
 
-pub var sleepMs: fn(time_in_ms: u32) void = dummySleepMs;
+pub var setInterruptType: fn (interrupt_type: InterruptType) void = dummySetInterruptType;
 
-pub var startCountdown: fn(time_in_ms: u32) void = dummyStartCountdown;
+pub var sleepMs: fn (time_in_ms: u32) void = dummySleepMs;
 
-pub var getCountdownRemainingTime: fn() u32 = dummyGetCountdownRemainingTime;
+pub var startCountdown: fn (time_in_ms: u32) void = dummyStartCountdown;
 
-pub var getHasCountdownEnded: fn() bool = dummyGetHasCountdownEnded;
+pub var getCountdownRemainingTime: fn () u32 = dummyGetCountdownRemainingTime;
 
-pub var stopCountdown: fn() void = dummyStopCountdown;
+pub var getHasCountdownEnded: fn () bool = dummyGetHasCountdownEnded;
 
-pub var acknowledgeCountdownInterrupt: fn() void = dummyAcknowledgeCountdownInterrupt;
+pub var stopCountdown: fn () void = dummyStopCountdown;
 
-fn dummyCalibrationSleep(_: fn() void) u32 {
+pub var acknowledgeCountdownInterrupt: fn () void = dummyAcknowledgeCountdownInterrupt;
+
+fn dummyCalibrationSleep(_: fn () void) u32 {
     @panic("no function for calibrationSleep available");
 }
 
@@ -91,11 +93,11 @@ fn dummyStartCountdown(_: u32) void {
 }
 
 fn dummyGetCountdownRemainingTime() u32 {
-    return 0;
+    @panic("no function for getCountdownRemainingTime available");
 }
 
 fn dummyGetHasCountdownEnded() bool {
-    return true;
+    @panic("no function for getHasCountdownEnded available");
 }
 
 fn dummyStopCountdown() void {}
@@ -143,7 +145,6 @@ inline fn selectClock(clock_list: anytype) Clock {
                 break :blk clock orelse @compileError("unhandled clock type");
             };
         }
-
     }
     return .None;
 }

@@ -139,7 +139,7 @@ pub const Process = struct {
                     .present = true,
                     .writable = entry.flags & 2 == 2,
                     .no_execute = entry.flags & 1 == 0,
-                    .user_accessable = true,
+                    .user_accessible = true,
                 }),
                 entry.segment_memory_size,
             );
@@ -155,7 +155,7 @@ pub const Process = struct {
             .present = true,
             .writable = stack_writable,
             .no_execute = stack_no_execute,
-            .user_accessable = true,
+            .user_accessible = true,
         });
         try mem_mapper.mapMemCopyFromBuffer(
             stack_page_address,
@@ -196,25 +196,25 @@ pub const Process = struct {
         @setEvalBranchQuota(5000);
         asm (asmSymbolFmt("Process.id", @byteOffsetOf(Process, "id")));
         asm (asmSymbolFmt(
-            "Process.registers.start_register",
-            @byteOffsetOf(Process, "registers") +
-            RegisterStore.start_register_offset,
-        ));
+                "Process.registers.start_register",
+                @byteOffsetOf(Process, "registers") +
+                    RegisterStore.start_register_offset,
+            ));
         asm (asmSymbolFmt(
-            "Process.registers.end_register",
-            @byteOffsetOf(Process, "registers") +
-            RegisterStore.end_register_offset,
-        ));
+                "Process.registers.end_register",
+                @byteOffsetOf(Process, "registers") +
+                    RegisterStore.end_register_offset,
+            ));
         asm (asmSymbolFmt(
-            "Process.registers.vector_store",
-            @byteOffsetOf(Process, "registers") +
-            RegisterStore.vector_store_offset,
-        ));
+                "Process.registers.vector_store",
+                @byteOffsetOf(Process, "registers") +
+                    RegisterStore.vector_store_offset,
+            ));
         asm (asmSymbolFmt(
-            "Process.page_mapper.page_table",
-            @byteOffsetOf(Process, "page_mapper") +
-            @byteOffsetOf(VirtualPageMapper, "page_table"),
-        ));
+                "Process.page_mapper.page_table",
+                @byteOffsetOf(Process, "page_mapper") +
+                    @byteOffsetOf(VirtualPageMapper, "page_table"),
+            ));
     }
 };
 
@@ -229,27 +229,27 @@ pub const KernelMainProcess = struct {
     comptime {
         @setEvalBranchQuota(5000);
         asm (asmSymbolFmt(
-            "KernelMainProcess.registers.start_register",
-            @byteOffsetOf(KernelMainProcess, "registers") +
-            KernelMainRegisterStore.start_register_offset,
-        ));
+                "KernelMainProcess.registers.start_register",
+                @byteOffsetOf(KernelMainProcess, "registers") +
+                    KernelMainRegisterStore.start_register_offset,
+            ));
         asm (asmSymbolFmt(
-            "KernelMainProcess.registers.end_register",
-            @byteOffsetOf(KernelMainProcess, "registers") +
-            KernelMainRegisterStore.end_register_offset,
-        ));
+                "KernelMainProcess.registers.end_register",
+                @byteOffsetOf(KernelMainProcess, "registers") +
+                    KernelMainRegisterStore.end_register_offset,
+            ));
         asm (asmSymbolFmt(
-            "KernelMainProcess.registers.vector_store",
-            @byteOffsetOf(KernelMainProcess, "registers") +
-            KernelMainRegisterStore.vector_store_offset,
-        ));
+                "KernelMainProcess.registers.vector_store",
+                @byteOffsetOf(KernelMainProcess, "registers") +
+                    KernelMainRegisterStore.vector_store_offset,
+            ));
         asm (asmSymbolFmt(
-            "KernelMainProcess.page_allocator_ptr",
-            @byteOffsetOf(KernelMainProcess, "page_allocator_ptr"),
-        ));
+                "KernelMainProcess.page_allocator_ptr",
+                @byteOffsetOf(KernelMainProcess, "page_allocator_ptr"),
+            ));
         asm (asmSymbolFmt(
-            "PageAllocator.page_table",
-            @byteOffsetOf(PageAllocator, "page_table"),
-        ));
+                "PageAllocator.page_table",
+                @byteOffsetOf(PageAllocator, "page_table"),
+            ));
     }
 };

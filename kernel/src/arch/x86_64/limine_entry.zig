@@ -4,6 +4,7 @@ const limine = @import("limine.zig");
 const common = @import("common.zig");
 const paging = @import("paging.zig");
 const page_allocation = @import("page_allocation.zig");
+const range = root.zig_extensions.range;
 const AbstractWriter = root.logging.AbstractWriter;
 const logging = root.logging;
 const Terminal = limine.LimineTerminal;
@@ -112,8 +113,7 @@ fn limine_entry() callconv(.C) void {
             @TypeOf(terminal_writer.terminalWriteFunc),
             terminal_info.write,
         );
-        var i: usize = 0;
-        while (i < terminal_info.terminal_count) : (i += 1) {
+        for (range(terminal_info.terminal_count)) |_, i| {
             const new_writer = terminal_writer.createAbstractWriter(terminal_info.terminals[i]);
             logging.abstract_writers.append(new_writer) catch break :terminal;
         }
@@ -124,13 +124,15 @@ fn limine_entry() callconv(.C) void {
         }
     }
     // Get kernel ELF for debugging symbols
-    const kernel_file_response = kernel_file_request.response
-        orelse @panic("bootloader didn't provide kernel file");
+    const kernel_file_response = kernel_file_request.response orelse {
+        @panic("bootloader didn't provide kernel file");
+    };
     const kernel_file = kernel_file_response.kernel_file;
     root.debugging.kernel_elf_file = kernel_file.address[0..kernel_file.size];
     // Get memory map from bootloader
-    const memory_map_response = memory_map_request.response
-        orelse @panic("bootloader didn't provide a memory map");
+    const memory_map_response = memory_map_request.response orelse {
+        @panic("bootloader didn't provide a memory map");
+    };
     const memory_map = memory_map_response.entries[0..memory_map_response.entry_count];
     // Get highest mappable address
     const total_mappable_size: usize = blk: {
@@ -185,9 +187,9 @@ fn limine_entry() callconv(.C) void {
             const start_bit_index = entry.base / bit_ratio;
             const end_bit_index = start_bit_index +
                 if (entry.length / bit_ratio > 0)
-                    entry.length / bit_ratio - 1
-                else
-                    0;
+                entry.length / bit_ratio - 1
+            else
+                0;
             const start_index = start_bit_index / 8;
             const end_index = end_bit_index / 8;
             const start_bit_pos = @truncate(u3, start_bit_index);
@@ -209,9 +211,9 @@ fn limine_entry() callconv(.C) void {
             const start_bit_index = @ptrToInt(kernel_memory_map.ptr) / bit_ratio;
             const end_bit_index = start_bit_index +
                 if (kernel_memory_map.len / bit_ratio > 0)
-                    kernel_memory_map.len / bit_ratio - 1
-                else
-                    0;
+                kernel_memory_map.len / bit_ratio - 1
+            else
+                0;
             const start_index = start_bit_index / 8;
             const end_index = end_bit_index / 8;
             const start_bit_pos = @truncate(u3, start_bit_index);
@@ -230,13 +232,15 @@ fn limine_entry() callconv(.C) void {
         }
         logger.debug(
             "Allocated kernel_memory_map - ptr: {*}, len: {x}",
-            .{kernel_memory_map.ptr, kernel_memory_map.len},
+            .{ kernel_memory_map.ptr, kernel_memory_map.len },
         );
         break :allocator_blk PageAllocator.new(
-           asm ("movq %%cr3, %[out]" : [out] "=r" (-> *[512]u64)),
-           kernel_memory_map,
-           total_mappable_size / 4096,
-       );
+            asm ("movq %%cr3, %[out]"
+                : [out] "=r" (-> *[512]u64)
+            ),
+            kernel_memory_map,
+            total_mappable_size / 4096,
+        );
     };
     // Allocate 28K + guard page for kernel stack
     {
@@ -272,14 +276,15 @@ fn limine_entry() callconv(.C) void {
             limine_framebuffers.len,
             framebuffers.len,
         );
-        if (max_framebuffers < limine_framebuffers.len) logger.warn(
-            "Only allocating {} out of {} framebuffers",
-            .{max_framebuffers, limine_framebuffers.len},
-        );
+        if (max_framebuffers < limine_framebuffers.len)
+            logger.warn(
+                "Only allocating {} out of {} framebuffers",
+                .{ max_framebuffers, limine_framebuffers.len },
+            );
         var framebuffer_i: usize = 0;
         for (limine_framebuffers[0..max_framebuffers]) |fb, i| {
             if (fb.bpp != 32) {
-                logger.warn("Skipping framebuffer {} because of unknown BPP {}", .{i, fb.bpp});
+                logger.warn("Skipping framebuffer {} because of unknown BPP {}", .{ i, fb.bpp });
                 continue;
             }
             const scanline: u32 = fb.pitch / (@as(u32, fb.bpp) / 8);
@@ -299,8 +304,7 @@ fn limine_entry() callconv(.C) void {
         framebuffers_arg.len = framebuffer_i;
     }
     // Write kernel arguments
-    const module_response = module_request.response
-        orelse @panic("bootloader didn't provide initrd");
+    const module_response = module_request.response orelse @panic("bootloader didn't provide initrd");
     if (module_response.module_count < 1) @panic("bootloader didn't provide initrd");
     const initrd_file = module_response.modules[0];
     const efi_ptr: @TypeOf(kernel_args_ptr.arch.efi_ptr) = blk: {
@@ -315,7 +319,9 @@ fn limine_entry() callconv(.C) void {
             .ptr = kernel_file.address,
             .len = kernel_file.size,
         },
-        .page_table_ptr = asm ("movq %%cr3, %[out]" : [out] "=r" (-> *[512]u64)),
+        .page_table_ptr = asm ("movq %%cr3, %[out]"
+            : [out] "=r" (-> *[512]u64)
+        ),
         .environment = .{
             .ptr = @as([]u8, "").ptr,
             .len = 0,

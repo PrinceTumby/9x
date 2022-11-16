@@ -159,22 +159,21 @@ pub const LocalApic = struct {
     pub fn init(base_address: usize) LocalApic {
         const local_apic_address = @ptrToInt(&LOCAL_APIC_BASE);
         // Map local APIC in higher half so can be accessed when process address spaces are used
-        page_allocator.offsetMapMem(base_address, local_apic_address, 0x3, 0x1000)
-            catch @panic("out of memory");
+        page_allocator.offsetMapMem(base_address, local_apic_address, 0x3, 0x1000) catch {
+            @panic("out of memory");
+        };
         return LocalApic{ .base_address = local_apic_address };
     }
 
     pub inline fn readRegister(self: *const LocalApic, comptime register: Register) u32 {
-        if (!register.read_allowed) @compileError(
-            "Register does not allow being read from"
-        );
+        if (!register.read_allowed)
+            @compileError("Register does not allow being read from");
         return @intToPtr(*volatile u32, self.base_address + register.offset).*;
     }
 
     pub inline fn writeRegister(self: *const LocalApic, comptime register: Register, value: u32) void {
-        if (!register.write_allowed) @compileError(
-            "Register does not allow being written to"
-        );
+        if (!register.write_allowed)
+            @compileError("Register does not allow being written to");
         @intToPtr(*volatile u32, self.base_address + register.offset).* = value;
     }
 
@@ -332,8 +331,9 @@ pub const IoApic = struct {
 
     pub fn init(base_address: usize, id: u32, global_system_interrupt_base: u32) IoApic {
         if (!page_allocator.isAddressIdentityMapped(base_address)) {
-            page_allocator.offsetMapMem(base_address, base_address, 0x3, 0x1000)
-                catch @panic("out of memory");
+            page_allocator.offsetMapMem(base_address, base_address, 0x3, 0x1000) catch {
+                @panic("out of memory");
+            };
         }
         var io_apic = IoApic{
             .base_address = base_address,
@@ -350,9 +350,8 @@ pub const IoApic = struct {
     }
 
     pub fn readRegister(self: *const IoApic, comptime register: Register) u32 {
-        if (!register.read_allowed) @compileError(
-            "Register does not allow being read from"
-        );
+        if (!register.read_allowed)
+            @compileError("Register does not allow being read from");
         // Write register index to selection register
         @intToPtr(*volatile u32, self.base_address).* = register.offset;
         // Read value from register window
@@ -360,9 +359,8 @@ pub const IoApic = struct {
     }
 
     pub fn writeRegister(self: *const IoApic, comptime register: Register, value: u32) void {
-        if (!register.write_allowed) @compileError(
-            "Register does not allow being written to"
-        );
+        if (!register.write_allowed)
+            @compileError("Register does not allow being written to");
         // Write register index to selection register
         @intToPtr(*volatile u32, self.base_address).* = register.offset;
         // Write value to register window

@@ -23,10 +23,12 @@ pub const Block = packed struct {
     /// Whether there is another block following this block
     next: bool,
 
-    pub const LenType = @Type(.{.Int = .{
-        .is_signed = false,
-        .bits = @bitSizeOf(usize) - 2,
-    }});
+    pub const LenType = @Type(.{
+        .Int = .{
+            .is_signed = false,
+            .bits = @bitSizeOf(usize) - 2,
+        },
+    });
 
     pub const alignment: u29 = @alignOf(usize);
 
@@ -63,9 +65,9 @@ pub const Block = packed struct {
 };
 
 const page_flags = arch.paging.PageTableEntry.generateU64(.{
-    .present = true,  // Present
-    .writable = true,  // Writable
-    .user_accessable = false, // User accessable
+    .present = true, // Present
+    .writable = true, // Writable
+    .user_accessible = false, // User accessable
     // FIXME: Turning on NX currently breaks test machine
     .no_execute = false, // No execute
 });

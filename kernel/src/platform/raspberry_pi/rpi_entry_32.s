@@ -20,6 +20,8 @@
 _start:
     ldr sp, =_start
     bl rpi_entrypoint
+    // Return to bootloader
+    bx lr
     // // Only proceed on boot core, park otherwise
     // mrc p15, 0, r5, c0, c0, 5
     // and r5, r5, #3

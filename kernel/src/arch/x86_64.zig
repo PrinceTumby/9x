@@ -13,6 +13,7 @@ pub const ps2_controller = @import("x86_64/ps2_8042_controller.zig");
 pub const ps2_manager = @import("x86_64/ps2_manager.zig");
 pub const apic = @import("x86_64/apic.zig");
 pub const clock_manager = @import("x86_64/clock_manager.zig");
+pub const cpuid = @import("x86_64/cpuid.zig");
 
 // Architecture specific kernel feature implementation
 
@@ -33,6 +34,7 @@ pub const syscall = @import("x86_64/syscall.zig");
 pub const task = @import("x86_64/task.zig");
 pub const tls = @import("x86_64/tls.zig");
 pub const virtual_page_mapping = @import("x86_64/virtual_page_mapping.zig");
+pub const user_page_mapping = @import("x86_64/user_page_mapping.zig");
 
 comptime {
     _ = syscall;
@@ -74,6 +76,7 @@ pub fn stage1Init(_args: *KernelArgs) void {
     gdt.loadNoReloadSegmentDescriptors();
     tss.loadTssIntoGdt();
     interrupts.initIDT();
+    cpuid.populateInfo();
 }
 
 pub fn stage2Init(args: *KernelArgs) void {
@@ -100,9 +103,15 @@ pub fn stage2Init(args: *KernelArgs) void {
         @panic("MADT not found");
     }
     interrupts.apic.initFromMadt(madt);
+    // Setup APIC Timer
     clock_manager.apic_timer.calibrate();
     clock_manager.apic_timer.setup() catch @panic("out of vectors");
     clock_manager.updateClockFunctions();
+    // Setup TSC (if usable)
+    if (cpuid.invariant_tsc) {
+        clock_manager.tsc.calibrate();
+        clock_manager.counters.tsc = true;
+    }
     // Load IA32_*STAR registers for syscall support
     {
         const user_base: u64 = gdt.offset.user_code_32;

@@ -1,6 +1,7 @@
 // Functions and data structures to decode the cpio format (used in initrd)
 
 const std = @import("std");
+const range = @import("root").zig_extensions.range;
 
 pub const CpioNode = extern struct {
     magic: [6]u8 = magic_const,
@@ -56,8 +57,7 @@ pub fn cpioFindFile(archive: []const u8, file_name: []const u8) ?[]const u8 {
                 cur_pos += 76 + node_name_len + node_file_size;
                 continue :loop;
             }
-            var i: usize = 0;
-            while (i < node_name_len - 1) : (i += 1) {
+            for (range(node_name_len - 1)) |_, i| {
                 if (node_file_name[i] != file_name[i]) {
                     cur_pos += CpioNode.name_offset + node_name_len + node_file_size;
                     continue :loop;

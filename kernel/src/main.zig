@@ -1,3 +1,4 @@
+pub const arch = @import("arch.zig");
 pub const cpio = @import("cpio.zig");
 pub const zig_extensions = @import("zig_extensions.zig");
 pub const Framebuffer = @import("core_graphics.zig").FrameBuffer;
@@ -7,17 +8,17 @@ pub const elf = @import("elf.zig");
 pub const heap = @import("heap.zig");
 pub const smp = @import("smp.zig");
 pub const process = @import("process.zig");
-pub const arch = @import("arch.zig");
+pub const virtual_memory_allocation = @import("virtual_memory_allocation.zig");
 pub const platform = arch.platform;
 pub const KernelArgs = arch.common.KernelArgs;
 pub const debugging = @import("debugging.zig");
 pub const logging = @import("logging.zig");
 pub const misc = @import("misc.zig");
 const std = @import("std");
-const initPageAllocator = arch.page_allocation.initPageAllocator;
 const page_allocator = arch.page_allocation.page_allocator_ptr;
 const heap_allocator = heap.heap_allocator_ptr;
 const Process = process.Process;
+const range = zig_extensions.range;
 
 const font_path = "etc/kernel/standard_font.psf";
 
@@ -53,19 +54,27 @@ pub extern var FRAMEBUFFER_START: u32;
 pub extern var FRAMEBUFFER_END: u32;
 
 pub fn breakpointLine(src: std.builtin.SourceLocation) void {
-    logger.debug("{s}:{}", .{src.file, src.line});
+    logger.debug("{s}:{}", .{ src.file, src.line });
     // asm volatile ("xchgw %%bx, %%bx");
 }
 
-// export fn kernel_main(args: *KernelArgs) noreturn {
-//     if (@hasDecl(arch, "initEarlyLoggers")) arch.initEarlyLoggers();
-//     kernel_args = args;
-//     logger.debug("KERNEL START", .{});
-//     while (true) {}
-// }
+comptime {
+    if (std.builtin.cpu.arch == .arm) {
+        @export(arm_kernel_main, .{ .name = "kernel_main", .linkage = .Strong });
+    } else {
+        @export(kernel_main, .{ .name = "kernel_main", .linkage = .Strong });
+    }
+}
+
+fn arm_kernel_main(args: *KernelArgs) callconv(.C) noreturn {
+    if (@hasDecl(arch, "initEarlyLoggers")) arch.initEarlyLoggers();
+    kernel_args = args;
+    logger.debug("KERNEL START", .{});
+    while (true) {}
+}
 
 // Called by the architecture specific initialisation code
-export fn kernel_main(args: *KernelArgs) noreturn {
+fn kernel_main(args: *KernelArgs) callconv(.C) noreturn {
     if (@hasDecl(arch, "initEarlyLoggers")) arch.initEarlyLoggers();
     // asm volatile ("hlt");
     kernel_args = args;
@@ -73,7 +82,7 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     // const STACK_SIZE = @ptrToInt(&STACK_END) - @ptrToInt(&STACK_BASE) + 1;
     const HEAP_SIZE = @ptrToInt(&HEAP_END) - @ptrToInt(&HEAP_BASE) + 1;
     logger.debug("KERNEL START", .{});
-    initPageAllocator(
+    arch.page_allocation.initPageAllocator(
         args.page_table_ptr,
         args.memory_map.ptr,
         args.memory_map.len,
@@ -81,8 +90,9 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     );
     logger.debug("Page allocator initialised, map size {}", .{page_allocator.memory_map.len});
     arch.stage1Init(args);
-    heap.initHeap(@ptrCast([*]u8, &HEAP_BASE)[0..HEAP_SIZE])
-        catch @panic("heap initialisation failed");
+    heap.initHeap(@ptrCast([*]u8, &HEAP_BASE)[0..HEAP_SIZE]) catch {
+        @panic("heap initialisation failed");
+    };
     logger.debug("Heap initialised: root block {}", .{heap.list_head.?});
     const initrd = args.initrd.ptr[0..args.initrd.len];
     outer: {
@@ -98,14 +108,12 @@ export fn kernel_main(args: *KernelArgs) noreturn {
         fb_initialised = true;
         if (cpio.cpioFindFile(initrd, font_path)) |font_file| {
             // Init debug text display
-            const font = text_lib.Font.init(
-                heap_allocator.dupe(u8, font_file) catch break :outer
-            ) orelse break :outer;
+            const heap_font = heap_allocator.dupe(u8, font_file) catch break :outer;
+            const font = text_lib.Font.init(heap_font) orelse break :outer;
             text_display = text_lib.TextDisplay(Framebuffer).init(
                 &fb,
                 font,
                 heap_allocator,
-            // ) catch break :outer;
             ) catch |err| {
                 logger.debug("text display initialisation failed: {}", .{err});
                 break :outer;
@@ -119,26 +127,32 @@ export fn kernel_main(args: *KernelArgs) noreturn {
     else
         logger.debug("Framebuffer not initialised", .{});
     arch.stage2Init(args);
+    logger.debug("CPU Vendor ID: {s}", .{arch.cpuid.cpu_vendor_id});
+    logger.debug("CPU Brand String: {s}", .{arch.cpuid.brand_string});
+    logger.debug("Invariant TSC: {}", .{arch.cpuid.invariant_tsc});
+    logger.debug("Local APIC Timer TSC Deadline: {}", .{arch.cpuid.local_apic_timer_tsc_deadline});
     // Parse test program ELF
     const test_program_path = "bin/sys/test_program";
-    const test_program = cpio.cpioFindFile(initrd, test_program_path)
-        orelse @panic("test program not found");
+    const test_program = cpio.cpioFindFile(initrd, test_program_path) orelse {
+        @panic("test program not found");
+    };
     const test_zig_program_path = "bin/sys/test_zig_program";
-    const test_zig_program = cpio.cpioFindFile(initrd, test_zig_program_path)
-        orelse @panic("test zig program not found");
+    const test_zig_program = cpio.cpioFindFile(initrd, test_zig_program_path) orelse {
+        @panic("test zig program not found");
+    };
     const tls_ptr = arch.tls.getThreadLocalVariables();
     arch.clock_manager.setInterruptType(.ContextSwitch);
+    if (text_display_initialised) while (true) {
+        asm volatile ("hlt");
+    };
     // Create processes
-    {
-        var i: usize = 0;
-        while (i < 1) : (i += 1) {
-            var example_process = heap_allocator.create(Process) catch @panic("out of memory");
-            example_process.* = Process.initUserProcessFromElfFile(test_zig_program) catch |err| {
-                logger.emerg("Failed to initalise process - {}", .{err});
-                @panic("process init failed");
-            };
-            process.process_list.push(127, example_process);
-        }
+    for (range(1)) |_| {
+        var example_process = heap_allocator.create(Process) catch @panic("out of memory");
+        example_process.* = Process.initUserProcessFromElfFile(test_program) catch |err| {
+            logger.emerg("Failed to initalise process - {}", .{err});
+            @panic("process init failed");
+        };
+        process.process_list.push(127, example_process);
     }
     // {
     //     arch.tss.iopb_ptr.allowPort(0x3F8);
@@ -152,12 +166,15 @@ export fn kernel_main(args: *KernelArgs) noreturn {
         tls_ptr.current_process_heap_ptr = new_process_ptr;
         arch.clock_manager.startCountdown(100);
         arch.clock_manager.acknowledgeCountdownInterrupt();
+        const start_time = arch.clock_manager.tsc.readCounter();
         while (true) {
             asm volatile ("xchgw %%bx, %%bx");
             arch.task.resumeUserProcess(&tls_ptr.current_process);
+            // TODO Undo `getHasCountdownEnded` APIC timer changes, remove countdown functions
+            // from TSC.
+            // TODO Switch interrupt handlers whenever we start up a new async task.
             switch (tls_ptr.yield_info.reason) {
                 .timeout => {
-                    arch.clock_manager.acknowledgeCountdownInterrupt();
                     break;
                 },
                 .system_call_request => arch.syscall.handleSystemCall(),
@@ -170,9 +187,13 @@ export fn kernel_main(args: *KernelArgs) noreturn {
             }
             if (arch.clock_manager.getCountdownRemainingTime() == 0) {
                 tls_ptr.yield_info.reason = .timeout;
+                // arch.clock_manager.acknowledgeCountdownInterrupt();
+                logger.debug("Kernel timeout!", .{});
                 break;
             }
         }
+        const end_time = arch.clock_manager.tsc.readCounter();
+        logger.debug("Ticks spent: {}", .{end_time - start_time});
         new_process_ptr.* = tls_ptr.current_process;
         process.process_list.push(127, new_process_ptr);
     }
@@ -181,3 +202,8 @@ export fn kernel_main(args: *KernelArgs) noreturn {
         asm volatile ("hlt");
     }
 }
+
+// TODO Make testing work (root points to std.special, need a custom test environment or runner)
+// test "All Tests" {
+//     std.testing.refAllDecls(virtual_memory_allocation);
+// }

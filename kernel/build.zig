@@ -4,7 +4,7 @@ const Target = std.Target;
 const CrossTarget = std.zig.CrossTarget;
 const builtin = @import("builtin");
 
-const BuildFunc = fn(b: *Builder) void;
+const BuildFunc = fn (b: *Builder) void;
 
 const supported_archs = [_][]const u8{
     "arm",
@@ -28,8 +28,9 @@ fn missingBuildFunc(_b: *Builder) void {
 const build_functions: [256]BuildFunc = comptime blk: {
     var funcs: [256]BuildFunc = [1]BuildFunc{missingBuildFunc} ** 256;
     for (supported_archs) |arch_string| {
-        const arch = cpu_arch_map.get(arch_string)
-            orelse @compileError("Architecture " ++ arch_string ++ "does not exist in build map");
+        const arch = cpu_arch_map.get(arch_string) orelse {
+            @compileError("Architecture " ++ arch_string ++ "does not exist in build map");
+        };
         funcs[@enumToInt(arch)] = @import("src/arch/" ++ arch_string ++ "/build/build.zig").build;
     }
     break :blk funcs;
@@ -41,7 +42,9 @@ pub fn build(b: *Builder) void {
         "cpu-arch",
         "The CPU architecture to build for",
     )) |cpu_arch_string|
-        cpu_arch_map.get(cpu_arch_string) orelse @panic("Unrecognized CPU architecture")
+        cpu_arch_map.get(cpu_arch_string) orelse {
+            std.debug.panic("Unrecognized CPU architecture {s}", .{cpu_arch_string});
+        }
     else
         builtin.cpu.arch;
 

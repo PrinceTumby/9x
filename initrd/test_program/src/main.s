@@ -1,9 +1,9 @@
 .data
 
 message_ptr:
-.ascii "Hello from process "
+// .ascii "Hello from process "
 message_pid_char: .byte 0
-.ascii "!"
+// .ascii "!"
 message_len = . - message_ptr
 
 .text
@@ -20,10 +20,11 @@ _start:
     movb %al, message_pid_char
     movq %rbx, %rax
     loop:
-    movq $1, %rax
-    leaq message_ptr, %rdi
-    movq $message_len, %rsi
-    syscall
+    // movq $4, %rax
+    // leaq message_ptr, %rdi
+    // movq $message_len, %rsi
+    // syscall
+    nop
     jmp loop
 
 .size _start, . - _start

@@ -4,7 +4,7 @@ const serial = @import("serial.zig");
 const logger = std.log.scoped(.main);
 
 const syscall = struct {
-    pub const Error = error {
+    pub const Error = error{
         UnknownSyscall,
         InvalidArgument,
         OutOfMemory,
@@ -85,11 +85,10 @@ const syscall = struct {
     }
 };
 
-
 const KernelDebugWriter = struct {
     var write_buffer: [256]u8 = undefined;
 
-    pub const Error = error {};
+    pub const Error = error{};
 
     pub fn writeAll(self: KernelDebugWriter, bytes: []const u8) Error!void {
         syscall.debugKernelPrint(bytes);
@@ -136,7 +135,9 @@ export fn _start() void {
         logger.emerg("Heap testing returned {}", .{err});
         @panic("heap testing failed");
     };
-    while (true) {}
+    while (true) {
+        // logger.debug("Hello, world!", .{});
+    }
 }
 
 fn runHeapTests() !void {
@@ -144,12 +145,13 @@ fn runHeapTests() !void {
     logger.debug("Current program break: 0x{x}", .{try syscall.moveBreak(0)});
     const ptr_1 = @intToPtr(*u64, try syscall.moveBreak(8));
     const ptr_2 = @intToPtr(*u64, try syscall.moveBreak(8));
-    logger.debug("{*}, {*}", .{ptr_1, ptr_2});
+    logger.debug("{*}, {*}", .{ ptr_1, ptr_2 });
     ptr_1.* = 1;
     ptr_2.* = 2;
     _ = try syscall.moveBreak(-8);
     _ = try syscall.moveBreak(-8);
-    logger.debug("{}, {}", .{ptr_1.*, ptr_2.*});
+    logger.debug("{}, {}", .{ ptr_1.*, ptr_2.* });
+    logger.debug("Tests done!", .{});
 }
 
 pub fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace) noreturn {

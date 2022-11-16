@@ -1,9 +1,9 @@
 //! Kernel implementation of allocating pages of physical memory
 
 const std = @import("std");
-const logger = std.log.scoped(.x86_64_kernel_page_allocation);
-const root = @import("root");
 const paging = @import("paging.zig");
+const logger = std.log.scoped(.x86_64_kernel_page_allocation);
+const range = @import("root").zig_extensions.range;
 const PageTableEntry = paging.PageTableEntry;
 const PageTable = paging.PageTable;
 
@@ -103,10 +103,20 @@ pub const PageAllocator = struct {
             );
             const entry = current_table[index];
             if (!entry.isPresent()) return false;
-            if (entry.isHugePage() and entry.getAddress() == page_address) return true;
+            if (i == 3 or entry.isHugePage()) {
+                const page_aligned_address = address & switch (i) {
+                    // ZIG BUG: Have to specify these as u64 for some reason?
+                    0 => @as(u64, 0xFFFF_FF80_C000_0000),
+                    1 => @as(u64, 0xFFFF_FFFF_C000_0000),
+                    2 => @as(u64, 0xFFFF_FFFF_FFE0_0000),
+                    3 => @as(u64, 0xFFFF_FFFF_FFFF_F000),
+                    else => unreachable,
+                };
+                return page_aligned_address == entry.getAddress();
+            }
             current_address = entry.getAddress();
         }
-        return false;
+        unreachable;
     }
 
     /// Returns the flags for an address, or `null` if the address isn't mapped
@@ -164,8 +174,7 @@ pub const PageAllocator = struct {
             const upper_bound = std.mem.alignBackward(physical_start_address +% size -% 1, 4096);
             break :blk ((upper_bound - lower_bound) >> 12) + 1;
         };
-        var page_i: usize = 0;
-        while (page_i < num_pages) : (page_i += 1) {
+        for (range(num_pages)) |_, page_i| {
             const physical_address = actual_physical_start_address + (page_i << 12);
             const virtual_address = virtual_start_address + (page_i << 12);
             var current_address = self.page_table.getAddress();
@@ -236,8 +245,7 @@ pub const PageAllocator = struct {
             const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
             break :blk ((upper_bound - lower_bound) >> 12) + 1;
         };
-        var page_i: usize = 0;
-        outer: while (page_i < num_pages) : (page_i += 1) {
+        outer: for (range(num_pages)) |_, page_i| {
             const virtual_address = actual_start_address + (page_i << 12);
             var current_address = self.page_table.getAddress();
             for (level_masks) |level_mask, i| {
@@ -292,8 +300,7 @@ pub const PageAllocator = struct {
             const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
             break :blk ((upper_bound - lower_bound) >> 12) + 1;
         };
-        var page_i: usize = 0;
-        outer: while (page_i < num_pages) : (page_i += 1) {
+        outer: for (range(num_pages)) |_, page_i| {
             const virtual_address = actual_start_address + (page_i << 12);
             var current_address = self.page_table.getAddress();
             for (level_masks) |level_mask, i| {
@@ -418,8 +425,7 @@ pub const PageAllocator = struct {
             const upper_bound = std.mem.alignBackward(virtual_start_address +% size -% 1, 4096);
             break :blk ((upper_bound - lower_bound) >> 12) + 1;
         };
-        var page_i: usize = 0;
-        while (page_i < num_pages) : (page_i += 1) {
+        for (range(num_pages)) |_, page_i| {
             const virtual_address = virtual_start_address + (page_i << 12);
             var current_address = self.page_table.getAddress();
             for (level_masks) |level_mask, i| {
@@ -443,8 +449,7 @@ pub const PageAllocator = struct {
 
     /// Switches to the page allocator's page table
     pub fn loadAddressSpace(self: *const PageAllocator) void {
-        asm volatile (
-            "movq %[page_table], %%cr3"
+        asm volatile ("movq %[page_table], %%cr3"
             :
             : [page_table] "{rax}" (self.page_table.__data)
         );

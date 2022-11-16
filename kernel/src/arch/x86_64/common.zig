@@ -5,6 +5,8 @@ const comptimeFmt = root.zig_extensions.comptimeFmt;
 const UserProcess = root.process.UserProcess;
 const ThreadLocalVariables = tls.ThreadLocalVariables;
 
+pub const page_size = 4096;
+
 // Ideally this will be automated in the future, but currently changing the layout of
 // this struct also requires changes to definitions in the following files (with paths
 // starting at kernel directory):

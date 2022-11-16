@@ -150,7 +150,7 @@ pub fn log(
 ) void {
     const lock = writer_lock.acquire();
     defer lock.release();
-    const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
+    const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ ") ";
     inline for (arch_writers.logger_list) |writer, i| {
         if (arch_writers.logger_enabled_list[i]) {
             fmt.format(writer, prefix ++ format ++ "\n", args) catch {};
@@ -172,7 +172,7 @@ pub fn logNoNewline(
 ) void {
     const lock = writer_lock.acquire();
     defer lock.release();
-    const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
+    const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ ") ";
     inline for (arch_writers.logger_list) |writer, i| {
         if (arch_writers.logger_enabled_list[i]) {
             fmt.format(writer, prefix ++ format, args) catch {};
@@ -197,7 +197,7 @@ pub fn logString(
     if (@enumToInt(level) > @enumToInt(std.log.level)) return;
     const lock = writer_lock.acquire();
     defer lock.release();
-    const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
+    const prefix = "[" ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ ") ";
     inline for (arch_writers.logger_list) |writer, i| {
         if (arch_writers.logger_enabled_list[i]) {
             writer.writeAll(prefix ++ prefix_string) catch return;

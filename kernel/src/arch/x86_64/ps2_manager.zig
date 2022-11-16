@@ -5,6 +5,7 @@ const interrupts = @import("interrupts.zig");
 const clock_manager = @import("clock_manager.zig");
 const Ps2Keyboard = @import("Ps2Keyboard.zig");
 const controller = @import("ps2_8042_controller.zig");
+const range = @import("root").zig_extensions.range;
 const readDataByte = controller.readDataByte;
 const sendDataByte = controller.sendDataByte;
 
@@ -65,8 +66,7 @@ pub const Port = struct {
         // Send command
         self.writeByte(@enumToInt(command));
         // Wait for response or timeout
-        var i: usize = 0;
-        while (i < 3) : (i += 1) {
+        for (range(3)) |_| {
             switch (@intToEnum(Response, self.readByteTimeout(100) orelse return .Timeout)) {
                 .Resend => continue,
                 else => |response| return response,
@@ -84,8 +84,7 @@ pub const Port = struct {
         self.writeByte(@enumToInt(command));
         // Wait for response or timeout
         {
-            var i: usize = 0;
-            while (i < 3) : (i += 1) {
+            for (range(3)) |_| {
                 const response = self.readByteTimeout(100) orelse return error.Timeout;
                 if (command == .Echo and response == @enumToInt(Response.Echo)) return;
                 switch (@intToEnum(Response, response)) {
@@ -99,8 +98,7 @@ pub const Port = struct {
         if (data_byte) |byte| {
             self.writeByte(byte);
             // Wait for response or timeout
-            var i: usize = 0;
-            while (i < 3) : (i += 1) {
+            for (range(3)) |_| {
                 const response = self.readByteTimeout(100) orelse return error.Timeout;
                 switch (@intToEnum(Response, response)) {
                     .Resend => continue,

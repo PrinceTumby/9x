@@ -76,7 +76,7 @@ pub const PageTableEntry = packed struct {
     pub const InputFlags = struct {
         present: bool = false,
         writable: bool = false,
-        user_accessable: bool = false,
+        user_accessible: bool = false,
         write_through_caching_enabled: bool = false,
         cache_disabled: bool = false,
         accessed: bool = false,
@@ -91,7 +91,7 @@ pub const PageTableEntry = packed struct {
         return @as(u64, 0) |
             @as(u64, if (flags.present) 0x1 else 0) |
             @as(u64, if (flags.writable) 0x2 else 0) |
-            @as(u64, if (flags.user_accessable) 0x4 else 0) |
+            @as(u64, if (flags.user_accessible) 0x4 else 0) |
             @as(u64, if (flags.write_through_caching_enabled) 0x8 else 0) |
             @as(u64, if (flags.cache_disabled) 0x10 else 0) |
             @as(u64, if (flags.accessed) 0x20 else 0) |
