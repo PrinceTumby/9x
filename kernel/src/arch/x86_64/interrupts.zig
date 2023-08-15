@@ -163,6 +163,7 @@ pub var legacy_irqs: [16]?IoHandler = [1]?IoHandler{null} ** 16;
 pub fn mapLegacyIrq(irq: u4, handler: idt.HandlerFunc) !void {
     const held = lock.acquire();
     defer held.release();
+    if (legacy_irqs[irq] != null) @panic("legacy IRQ already mapped");
     switch (active_io_interrupt_system) {
         .None => return error.InterruptSystemNotInitialised,
         .Apic => {
@@ -283,8 +284,8 @@ pub const apic = struct {
         var trigger_mode: IoApic.RedirectionEntry.TriggerMode = .EdgeSensitive;
         const redirected_irq: u32 = blk: for (interrupt_source_overrides.items) |override| {
             if (override.irq_source == irq) {
-                polarity = if (override.flags & 2 == 1) .Low else .High;
-                trigger_mode = if (override.flags & 8 == 1) .LevelSensitive else .EdgeSensitive;
+                polarity = if (override.flags & 2 != 0) .Low else .High;
+                trigger_mode = if (override.flags & 8 != 0) .LevelSensitive else .EdgeSensitive;
                 if (override.global_system_interrupt > 255) @panic("legacy irq redirect above 255");
                 break :blk override.global_system_interrupt;
             }
@@ -298,6 +299,16 @@ pub const apic = struct {
             if (start_irq <= redirected_irq and redirected_irq < end_irq) {
                 const index = redirected_irq - start_irq;
                 if (index > 0x3F) @panic("redirection entry out of range");
+                const redirection_entry = IoApic.RedirectionEntry{
+                    .interrupt_vector = interrupt_vector,
+                    .delivery_mode = .Normal,
+                    // TODO Support logical APIC addressing
+                    .destination_mode = .Physical,
+                    .polarity = polarity,
+                    .trigger_mode = trigger_mode,
+                    .interrupt_mask = false,
+                    .destination_field = @truncate(u8, bsp_id),
+                };
                 io_apic.writeRedirectionEntry(@truncate(u8, index), .{
                     .interrupt_vector = interrupt_vector,
                     .delivery_mode = .Normal,
@@ -332,9 +343,15 @@ pub const apic = struct {
             if (start_irq <= redirected_irq and redirected_irq < end_irq) {
                 const index = redirected_irq - start_irq;
                 if (index > 0x3F) @panic("redirection entry out of range");
-                const entry = io_apic.readRedirectionEntry(@truncate(u8, index));
-                // FIXME: What on earth does this do?
-                io_apic.writeRedirectionEntry(@truncate(u8, index), entry);
+                io_apic.writeRedirectionEntry(@truncate(u8, index), .{
+                    .interrupt_vector = 0,
+                    .delivery_mode = .Normal,
+                    .destination_mode = .Physical,
+                    .polarity = .High,
+                    .trigger_mode = .EdgeSensitive,
+                    .interrupt_mask = true,
+                    .destination_field = 0,
+                });
             }
         }
     }

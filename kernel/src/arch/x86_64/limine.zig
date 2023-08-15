@@ -176,7 +176,7 @@ pub const MemoryMapEntry = extern struct {
 
     pub const Type = enum(u64) {
         Usable = 0,
-        Reverved = 1,
+        Reserved = 1,
         AcpiReclaimable = 2,
         AcpiNonVolatileStorage = 3,
         BadMemory = 4,

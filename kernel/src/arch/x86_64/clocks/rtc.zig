@@ -61,10 +61,10 @@ pub fn calibrationSleep(startTimer: fn() void) u32 {
     // Disable timer IRQs
     cmos.writeByte(true, cmos.registers.status_register_b, new_b_no_interrupt);
     // Flush C register again, enable NMI
-    _ = cmos.readByte(true, cmos.registers.status_register_c);
+    _ = cmos.readByte(false, cmos.registers.status_register_c);
     // Reset interrupt received indicator again
     interrupt_received = false;
-    // Return number of ticks slept for
+    // Return number of microseconds slept for
     const frequency = 32768 >> (rate - 1);
     return 1_000_000 / frequency;
 }

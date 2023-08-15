@@ -1,11 +1,57 @@
+Big ideas:
+- Allow processes to give each other time? Main motivation is the potential of services being overwhelmed, could
+  instead make it so services have a limited amount of time they spend fairly between requests, requesting programs
+  can give time to services to make things happen faster.
+- Process grouping? Processes can be in multiple groups, only able to communicate with other proccesses in same group.
+    - (First idea) Store a bitmap with each process. Has the problem of heavily limiting number of possible groups or
+      needing a massive bitmap.
+    - (Better idea) Store groups as 31-bit numbers (1 bit for present), store two inside process structure, linked
+      list of single page hash tables.
+- Come up with more ideas to speed up sending data:
+    - Implement huge page support, should help a lot with big blocks of data.
+        - Improve physical page allocator, maybe some kind of buddy allocator?
+        - Maybe some kind of big page hint/requirement when process allocates segments? Could also help with DMA
+          buffers.
+    - Find situations in which we can just move entire page table tree between processes.
+- Including owner tracking data in segment along with total number of pages used, so unmapping segments gives pages
+  back to original owner.
+- RDBMS for the filesystem? Think MySQL can use raw partitions. Might be an easy way to get a decent filesystem up
+  and running.
+
+Practical stuff:
 - Finish multiboot implementation
 - Implement KASLR
 - Redesign heap to be linked list of page pools, don't remap into kernel area
-- Allocate space for framebuffer in upper memory, map near start of kernel
+- Allocate space for framebuffer in upper memory, map near start of kernel (probably not required in future, moving
+  framebuffer to userspace)
 - Write menu configuration tool
 - Add more configuration options to disable certain features
 - Implement kernel argument parsing
 - Implement platform feature detection
+- Mark kernel pages as global instead of mapping higher half into every new page table (is there any point to this?)
+
+Virtual Memory Allocation:
+- Currently force mapping unmaps all the old pages, then maps all the new pages. This could probably be faster if we
+  just changed the page flags.
+- Maybe add immutable segment mappings for unusable areas?
+
+Process threading:
+- VMA system currently creates and removes mappings in a very non-atomic fashion. Figure out some locking scheme for
+  this that allows other threads to continue doing tasks (preferably able to map memory too):
+    - (First idea) Invalidate upper level page table entry, mark as being modified (integrate in UnmapMemTask).
+    - (Better idea) Remove segment first, unmap pages after so that page faults (shouldn't happen anyway) don't result
+      in pages being remapped in the segment.
+      Keep a list of new segments being added, so threads don't try to map in the same area at the same time.
+- OOM conditions when overwriting mappings are currently unrecoverable. Figure out some plan for this.
+    - (Option 1) Just unmap the whole overwritten area and return error state.
+    - (Option 2) Somehow make the process reversible (probably needs a lot more memory).
+    - (Option 3) Precalculate the memory usage difference the operation will incur, so we know if an OOM will occur
+      before we start (ideal, but more difficult).
+
+Old:
 - Change 'out' folders to 'zig-out'
+[We seem to be switching to Rust over time, so likely unnecessary]
 - Write documentation comments using "//#" as start, set Vim to automatically fold documentation
+[Ditto, plus rustdoc is pretty great so module comments are probably good enough]
 - Write tool to convert between Markdown/Vimwiki and Zig with documentation comments
+[Ditto]

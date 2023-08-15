@@ -77,6 +77,7 @@ fn arm_kernel_main(args: *KernelArgs) callconv(.C) noreturn {
 fn kernel_main(args: *KernelArgs) callconv(.C) noreturn {
     if (@hasDecl(arch, "initEarlyLoggers")) arch.initEarlyLoggers();
     // asm volatile ("hlt");
+    // TODO Remove this? Doesn't look like it's actually used anywhere
     kernel_args = args;
     // const KERNEL_SIZE = @ptrToInt(&KERNEL_END) - @ptrToInt(&KERNEL_BASE) + 1;
     // const STACK_SIZE = @ptrToInt(&STACK_END) - @ptrToInt(&STACK_BASE) + 1;
@@ -170,8 +171,6 @@ fn kernel_main(args: *KernelArgs) callconv(.C) noreturn {
         while (true) {
             asm volatile ("xchgw %%bx, %%bx");
             arch.task.resumeUserProcess(&tls_ptr.current_process);
-            // TODO Undo `getHasCountdownEnded` APIC timer changes, remove countdown functions
-            // from TSC.
             // TODO Switch interrupt handlers whenever we start up a new async task.
             switch (tls_ptr.yield_info.reason) {
                 .timeout => {

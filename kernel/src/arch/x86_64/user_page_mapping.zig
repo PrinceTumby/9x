@@ -1,5 +1,6 @@
 const std = @import("std");
 const PageAllocator = @import("page_allocation.zig").PageAllocator;
+const clock_manager = @import("clock_manager.zig");
 const paging = @import("paging.zig");
 const range = @import("root").zig_extensions.range;
 const PageTable = paging.PageTable;
@@ -69,6 +70,7 @@ pub const UserPageMapper = struct {
         var parent_pages_created = [3]?[*]allowzero align(4096) u8{ null, null, null };
         errdefer for (parent_pages_created) |page_ptr_maybe| if (page_ptr_maybe) |page_ptr| {
             self.page_allocator.freePage(@intToPtr(page_ptr));
+            if (pages_left) |pages_left_ptr| pages_left_ptr.* += 1;
         };
         // Loop through page levels
         const virtual_address = virtual_start_address + (page_i << 12);
@@ -279,14 +281,15 @@ pub const UserPageMapper = struct {
                 free_child,
                 pages_left,
             );
-            // TODO Write a new inline `suspendIfOvertime` clock function
-            // TODO Rewrite `changeFlags` (below) as `asyncChangeFlags`
+            if (clock_manager.getHasCountdownEnded()) {
+                suspend;
+            }
         }
     }
 
     /// Sets the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Relaxes permissions for parent pages where necessary.
-    pub fn changeFlags(
+    pub fn asyncChangeFlags(
         self: *UserPageMapper,
         start_address: u64,
         flags: u64,
@@ -294,12 +297,11 @@ pub const UserPageMapper = struct {
     ) void {
         const actual_start_address = start_address & 0x000FFFFFFFFFF000;
         const actual_flags = (flags & 0x80000000000001FE) | 0x1;
-        const parent_relaxation_flags = (flags & 0x6) | 0x1;
-        const parent_no_execute_mask: u64 =
-            if (flags & (1 << 63) == 0)
-            ~@as(u64, 1 << 63)
-        else
-            ~@as(u64, 0);
+        const parent_flags = PageTableEntry.generateU64(.{
+            .present = true,
+            .writable = true,
+            .user_accessible = true,
+        });
         const num_pages = blk: {
             const lower_bound = std.mem.alignBackward(start_address, 4096);
             const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
@@ -309,6 +311,9 @@ pub const UserPageMapper = struct {
             const virtual_address = actual_start_address + (page_i << 12);
             var current_address = self.page_table.getAddress();
             for (level_masks) |level_mask, i| {
+                if (clock_manager.getHasCountdownEnded()) {
+                    suspend;
+                }
                 const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
                 const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
                 const index = @truncate(
@@ -319,104 +324,10 @@ pub const UserPageMapper = struct {
                 if (!entry.isPresent()) {
                     continue :outer;
                 }
-                if (i < 3) {
-                    // TODO Test this
-                    // TODO Optimize, skip over next pages in huge page
-                    if (entry.isHugePage()) {
-                        const stripped_address = entry.getAddress() & 0x000FFFFFFFFFF000;
-                        const huge_page_flag = PageTableEntry.generateU64(.{
-                            .huge_page = true,
-                        });
-                        const new_entry = stripped_address | actual_flags | huge_page_flag;
-                        current_table_ptr[index] = new_entry;
-                        asm volatile ("invlpg (%[page])"
-                            :
-                            : [page] "r" (virtual_address)
-                            : "memory"
-                        );
-                        continue :outer;
-                    }
-                    const new_entry =
-                        (entry.__data | parent_relaxation_flags) & parent_no_execute_mask;
-                    current_table_ptr[index] = new_entry;
-                    asm volatile ("invlpg (%[page])"
-                        :
-                        : [page] "r" (virtual_address)
-                        : "memory"
-                    );
-                } else {
+                if (i == 3) {
                     const new_entry = (entry.getAddress() & 0x000FFFFFFFFFF000) | actual_flags;
                     current_table_ptr[index] = new_entry;
-                    asm volatile ("invlpg (%[page])"
-                        :
-                        : [page] "r" (virtual_address)
-                        : "memory"
-                    );
                 }
-                current_address = entry.getAddress();
-            }
-        }
-    }
-
-    // TODO Optimize by keeping count of number of pages done, stay at deepest level
-    // TODO Make this relax parent NX flag
-    /// Relaxes the flags of `(size / 4096) + 1` child pages starting at the given linear address.
-    /// Also relaxes permissions for parent pages where necessary.
-    pub fn changeFlagsRelaxing(
-        self: *UserPageMapper,
-        start_address: u64,
-        flags: u64,
-        size: u64,
-    ) void {
-        const actual_start_address = start_address & 0x000FFFFFFFFFF000;
-        const relaxation_flags = (flags & 0x6) | 0x1;
-        const no_execute_mask: u64 =
-            if (flags & (1 << 63) == 0)
-            ~@as(u64, 1 << 63)
-        else
-            ~@as(u64, 0);
-        const num_pages = blk: {
-            const lower_bound = std.mem.alignBackward(start_address, 4096);
-            const upper_bound = std.mem.alignBackward(start_address +% size -% 1, 4096);
-            break :blk ((upper_bound - lower_bound) >> 12) + 1;
-        };
-        outer: for (range(num_pages)) |_, page_i| {
-            const virtual_address = actual_start_address + (page_i << 12);
-            var current_address = self.page_table.getAddress();
-            for (level_masks) |level_mask, i| {
-                const current_table_ptr = @intToPtr(*align(4096) [512]u64, current_address);
-                const current_table = @ptrCast(*align(4096) PageTable, current_table_ptr);
-                const index = @truncate(
-                    u9,
-                    (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
-                );
-                var entry = current_table[index];
-                if (!entry.isPresent()) {
-                    continue :outer;
-                }
-                // TODO Test this
-                // TODO Optimize, skip over next pages in huge page
-                if (entry.isHugePage()) {
-                    const stripped_address = entry.getAddress() & 0x000FFFFFFFFFF000;
-                    const huge_page_flag = PageTableEntry.generateU64(.{
-                        .huge_page = true,
-                    });
-                    const new_entry = (entry.__data | relaxation_flags) & no_execute_mask;
-                    current_table_ptr[index] = new_entry;
-                    asm volatile ("invlpg (%[page])"
-                        :
-                        : [page] "r" (virtual_address)
-                        : "memory"
-                    );
-                    continue :outer;
-                }
-                const new_entry = (entry.__data | relaxation_flags) & no_execute_mask;
-                current_table_ptr[index] = new_entry;
-                asm volatile ("invlpg (%[page])"
-                    :
-                    : [page] "r" (virtual_address)
-                    : "memory"
-                );
                 current_address = entry.getAddress();
             }
         }

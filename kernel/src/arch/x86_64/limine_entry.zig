@@ -138,7 +138,7 @@ fn limine_entry() callconv(.C) void {
     const total_mappable_size: usize = blk: {
         var return_size: usize = 0;
         for (memory_map) |entry| {
-            const end_address = entry.base + entry.length;
+            const end_address = entry.base + entry.length - 1;
             if (end_address > return_size) return_size = end_address;
         }
         break :blk return_size;

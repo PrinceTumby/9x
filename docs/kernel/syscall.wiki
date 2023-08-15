@@ -26,7 +26,7 @@ extern fn move_break(difference: isize) usize;
 These system calls change the location of the program break. Refer to Linux man
 pages (brk and sbrk) for more details.
 
-If the result of set_break is in kernel space, it represents 1-errno.
+If the result of set_break is in kernel space, it represents -1-errno.
 Otherwise, it is the address of the new program break.
 
 == map_mem, unmap_mem - Memory management ==
@@ -39,7 +39,7 @@ extern fn unmap_mem(start: *c_void, length: usize) !void;
 These system calls are used for mapping pages into the process's address space.
 Refer to Linux man pages (mmap and munmap) for more details.
 
-If the result of map_mem is in kernel space, it represents 1-errno. Otherwise,
+If the result of map_mem is in kernel space, it represents -1-errno. Otherwise,
 it is the address of the start of the mapped area.
 
 == send_mail - IPC ==

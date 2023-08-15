@@ -4,9 +4,12 @@ const std = @import("std");
 const arch = @import("arch.zig");
 const zig_extensions = @import("zig_extensions");
 const page_size = arch.common.page_size;
+const highest_user_address = arch.common.process.highest_user_address;
 const compileErrorFmt = zig_extensions.compileErrorFmt;
 const PageAllocator = arch.page_allocation.PageAllocator;
 const VirtualPageMapper = arch.virtual_page_mapping.VirtualPageMapper;
+
+const end_user_address = highest_user_address + 1;
 
 pub const Segment = struct {
     start: usize,
@@ -64,20 +67,20 @@ pub const VmaAllocator = struct {
     }
 
     /// Iterates over all segments in the VmaAllocator.
-    pub fn iterator(self: *VmaAllocator) Iterator {
+    pub inline fn iterator(self: *VmaAllocator) Iterator {
         return Iterator{
             .start = 0,
-            .end = std.math.maxInt(usize),
+            .end = end_user_address,
             .current_entry = self.tree.getFirst(),
         };
     }
 
     /// Iterates over all segments part of the range (inclusive start, exclusive end)
     /// of addresses given.
-    pub fn iteratorRange(self: *VmaAllocator, start: usize, end: usize) Iterator {
+    pub inline fn iteratorRange(self: *VmaAllocator, start: ?usize, end: ?usize) Iterator {
         return Iterator{
-            .start = start,
-            .end = end,
+            .start = start or 0,
+            .end = std.math.min(end orelse end_user_address, end_user_address),
             .current_entry = self.tree.getNodeContainingOrAfter(start),
         };
     }
@@ -88,12 +91,8 @@ pub const VmaAllocator = struct {
         current_entry: ?*VmaEntry,
 
         pub fn next(it: *Iterator) ?Segment {
-            const entry = it.current_entry orelse return null;
-            if (entry.start >= it.end) {
-                it.current_entry = null;
-                return null;
-            }
-            it.current_entry = entry.getNext();
+            const next_entry = it.current_entry orelse return null;
+            it.current_entry = if (entry.start >= it.end) null else entry.getNext();
             return Segment{
                 .start = entry.getStart(),
                 .len = entry.len,
@@ -102,11 +101,49 @@ pub const VmaAllocator = struct {
         }
     };
 
+    pub fn asyncMapFindSpaceAfter(self: *VmaAllocator, segment: Segment) void {
+        var iter = iteratorRange(segment.start, std.math.maxInt(usize));
+        // Check gaps between pairs of entries, allocate segment if large enough
+        const final_gap_start = blk: {
+            var left_entry = iter.next() orelse break :blk 0;
+            while (iter.next()) |right_entry| {
+                defer left_entry = right_entry;
+                const gap_start = left_entry.start + left_entry.len;
+                const gap_end = right_entry.start;
+                if (gap_end - gap_start >= segment.len) {
+                    // Map segment
+                    // TODO Align segment to page boundaries (maybe return error instead?)
+                    // 1. Get new entry with VmaPage.findAndReserveEntry or allocate new VmaPage.
+                    // 2. Add segment information to allocated VmaEntry.
+                    // 3. Use VmaTree.insert to insert new VmaEntry into the tree.
+                    // Remember to subtract user memory pages as we're going.
+                    // Also remember to add in suspend points.
+                }
+            }
+            // If we got to the end, return the end of the last segment
+            break :blk left_entry.start + left_entry.len;
+        };
+        // Use space up to end of userspace memory if large enough
+        if (highest_user_address - final_gap_start >= segment.len) {
+            // Map segment
+        }
+    }
+
+    pub fn asyncMapReplace(self: *VmaAllocator, segment: Segment) void {}
+
+    pub const MapAtError = error{
+        OutOfPages,
+        SegmentExists,
+    };
+
+    pub fn mapAtOrFail(self: *VmaAllocator, segment: Segment) !void {}
+
+    // TODO Add
     // TODO Change VirtualPageMapper to UserMemoryAllocator
     // - Make mapping functions take an optional pointer to a number of extra pages available
-    //   to use (fuel).
+    //   to use (fuel). (DONE)
     // - Extra pages are just used for stuff like page tables. Normal pages contain actual useful
-    //   data, and should be removed at the start when a segment allocation is requested.
+    //   data, and should be removed at the start when a segment allocation is requested. (DONE)
     // - Fail on finding existing pages.
     // TODO Add `remote` flag, indicates if non-writable memory is owned by another process.
     // TODO Write segment mapping functions
@@ -232,9 +269,9 @@ const VmaTree = struct {
         while (true) {
             if (current_node.getStart() > addr) {
                 last_node = current_node;
-                current_node = current_node.children[0] orelse break;
+                current_node = current_node.getPrevious() orelse return null;
             } else if (current_node.getStart() + current_node.len - 1 < addr) {
-                current_node = current_node.children[1] orelse current_node.getNext() orelse return null;
+                current_node = current_node.getNext() orelse return null;
                 last_node = current_node;
             } else {
                 return current_node;
@@ -249,7 +286,7 @@ const VmaTree = struct {
         const cousin_maybe = sibling.children[direction];
         subtree_root.children[1 - direction] = cousin_maybe;
         if (cousin_maybe) |cousin| cousin.parent = subtree_root;
-        sibling.cihldren[direction] = subtree_root;
+        sibling.children[direction] = subtree_root;
         subtree_root.parent = sibling;
         sibling.parent = grandparent_maybe;
         if (grandparent_maybe) |grandparent| {
@@ -320,6 +357,8 @@ const VmaTree = struct {
                 }
                 // Now new_parent is red and g is not null
                 const new_side = current_new_parent.getDirectionFromParent();
+                // FIXME: Uncle needs to be defined here, recheck condition for Case_I56 (copy
+                // Rust version)
                 if (grandparent.children[1 - new_side]) |new_uncle| {
                     if (new_uncle.color == .black) {
                         // Case_I56
@@ -533,8 +572,21 @@ const VmaEntry = extern struct {
 
     pub fn maximum(self: *VmaEntry) *VmaEntry {
         var node = self;
-        while (node.children[0]) |child| node = child;
+        while (node.children[1]) |child| node = child;
         return node;
+    }
+
+    pub fn getPrevious(self: *VmaEntry) ?*VmaEntry {
+        if (self.children[0]) |left_child| return left_child.maximum();
+        var current_node = self;
+        while (true) {
+            const parent = current_node.parent orelse return null;
+            if (current_node.getDirectionFromParent() == 1) {
+                return parent;
+            } else {
+                current_node = parent;
+            }
+        }
     }
 
     pub fn getNext(self: *VmaEntry) ?*VmaEntry {

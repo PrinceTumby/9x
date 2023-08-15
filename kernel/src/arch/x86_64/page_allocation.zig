@@ -256,7 +256,6 @@ pub const PageAllocator = struct {
                     (level_mask & virtual_address) >> @truncate(u6, (3 - i) * 9 + 12),
                 );
                 const entry = current_table[index];
-                // Allocate page if required
                 if (!entry.isPresent()) {
                     continue :outer;
                 }

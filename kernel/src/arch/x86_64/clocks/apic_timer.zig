@@ -160,9 +160,8 @@ pub fn getCountdownRemainingTime() u32 {
 }
 
 pub fn getHasCountdownEnded() bool {
-    return getCountdownRemainingTime() == 0;
-    // const local_apic_tls = tls.getThreadLocalVariable("local_apic");
-    // return local_apic_tls.interrupt_received;
+    const local_apic_tls = tls.getThreadLocalVariable("local_apic");
+    return local_apic_tls.interrupt_received;
 }
 
 pub fn stopCountdown() void {

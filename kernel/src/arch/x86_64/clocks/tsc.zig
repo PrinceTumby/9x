@@ -28,27 +28,3 @@ pub fn calibrate() void {
     tsc_tls.us_denominator = time_slept;
     logger.debug("TSC Calibration: {}/{}", .{ tsc_tls.us_numerator, tsc_tls.us_denominator });
 }
-
-pub fn startCountdown(time_in_ms: u32) void {
-    const time_in_us = @as(usize, time_in_ms) * 1000;
-    // Calculate number of TSC ticks
-    const tsc_tls = tls.getThreadLocalVariable("timestamp_counter");
-    const local_apic = local_apic_tls.apic;
-    tsc_tls.countdown_end = (tsc_tls.us_numerator * time_in_us) / tsc_tls.us_numerator;
-}
-
-pub fn getCountdownRemainingTime() u32 {
-    // Read current count, convert ticks to microseconds, then to milliseconds
-    const time_in_tsc_ticks = readCounter();
-    const deadline_time = tls.getThreadLocalVariable("timestamp_counter").countdown_end;
-    const current_time = readCounter();
-    if (current_time >= deadline_time) return 0;
-    return @truncate(u32, ((deadline_time - current_time) * denominator) / numerator / 1000);
-}
-
-pub fn getHasCountdownEnded() bool {
-    const time_in_tsc_ticks = readCounter();
-    const deadline_time = tls.getThreadLocalVariable("timestamp_counter").countdown_end;
-    const current_time = readCounter();
-    return current_time >= deadline_time;
-}

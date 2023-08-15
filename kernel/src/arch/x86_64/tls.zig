@@ -191,7 +191,9 @@ pub inline fn getThreadLocalVariables() *ThreadLocalVariables {
     comptime const asm_string = blk: {
         var buffer: [22]u8 = undefined;
         const offset = @byteOffsetOf(ThreadLocalVariables, "self_pointer");
-        break :blk std.fmt.bufPrint(&buffer, "movq %%gs:{}, %[out]", .{offset}) catch |err| @compileError("asm string formatting error: " ++ @errorName(err));
+        break :blk std.fmt.bufPrint(&buffer, "movq %%gs:{}, %[out]", .{offset}) catch |err| {
+            @compileError("asm string formatting error: " ++ @errorName(err));
+        };
     };
     return asm (asm_string
         : [out] "=r" (-> *ThreadLocalVariables)
@@ -203,7 +205,9 @@ pub inline fn getThreadLocalVariable(comptime name: []const u8) *getReturnType(n
     comptime const asm_string = blk: {
         var buffer: [22]u8 = undefined;
         const offset = @byteOffsetOf(ThreadLocalVariables, "self_pointer");
-        break :blk std.fmt.bufPrint(&buffer, "movq %%gs:{}, %[out]", .{offset}) catch |err| @compileError("asm string formatting error: " ++ @errorName(err));
+        break :blk std.fmt.bufPrint(&buffer, "movq %%gs:{}, %[out]", .{offset}) catch |err| {
+            @compileError("asm string formatting error: " ++ @errorName(err));
+        };
     };
     return &@field(asm (asm_string
         : [out] "=r" (-> *ThreadLocalVariables)

@@ -303,6 +303,7 @@ pub const IoApic = struct {
                     DestinationMode,
                     @truncate(u1, (value & 0x800) >> 11),
                 ),
+                .interrupt_pending = value & 0x1000 != 0,
                 .polarity = @intToEnum(Polarity, @truncate(u1, (value & 0x2000) >> 13)),
                 .level_triggered_interrupt_status = @intToEnum(
                     LevelTriggeredInterruptStatus,

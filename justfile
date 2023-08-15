@@ -1,18 +1,19 @@
 set shell := ["bash", "-uc"]
 set windows-shell := ["cmd.exe", "/c"]
 
-os := os_family()
+os := os()
+os_family := os_family()
 
 # Command replacements
-wsl := if os == "windows" { "wsl" } else { "" }
-rm := if os == "windows" { "del" } else { "rm" }
-rmdir := if os == "windows" { "rmdir /s /q" } else { "rm -r" }
-copy := if os == "windows" { "1>NUL copy" } else { "cp" }
-copydir := if os == "windows" { "1>NUL xcopy /c /q /e /i" } else { "cp -r" }
-mkdir_create_parents := if os == "windows" { "mkdir" } else { "mkdir -p" }
-silence_stderr := if os == "windows" { "2>NUL" } else { "2>/dev/null" }
+wsl := if os_family == "windows" { "wsl" } else { "" }
+rm := if os_family == "windows" { "del" } else { "rm" }
+rmdir := if os_family == "windows" { "rmdir /s /q" } else { "rm -r" }
+copy := if os_family == "windows" { "1>NUL copy" } else { "cp" }
+copydir := if os_family == "windows" { "1>NUL xcopy /c /q /e /i" } else { "cp -r" }
+mkdir_create_parents := if os_family == "windows" { "mkdir" } else { "mkdir -p" }
+silence_stderr := if os_family == "windows" { "2>NUL" } else { "2>/dev/null" }
 # Works around issues with zigup on windows
-zig_build_end := if os == "windows" { "& exit" } else { "" }
+zig_build_end := if os_family == "windows" { "& exit" } else { "" }
 
 _bootx64_path := join("kernel", "boot", "efi", "out", "bootx64.efi")
 
@@ -54,18 +55,18 @@ _isoroot := join("out", "isoroot")
     echo - Building ISO...
     {{mkdir_create_parents}} {{join(_isoroot, "boot", "limine")}}
     {{copy}} {{join("misc", "limine.cfg")}} {{join(_isoroot, "boot")}}
-    {{copy}} {{join("misc", "limine", "limine.sys")}} {{join(_isoroot, "boot")}}
-    {{copy}} {{join("misc", "limine", "limine-cd.bin")}} {{join(_isoroot, "boot", "limine")}}
-    {{copy}} {{join("misc", "limine", "limine-cd-efi.bin")}} {{join(_isoroot, "boot", "limine")}}
+    {{copy}} {{join("misc", "limine", "limine-bios.sys")}} {{join(_isoroot, "boot")}}
+    {{copy}} {{join("misc", "limine", "limine-bios-cd.bin")}} {{join(_isoroot, "boot", "limine")}}
+    {{copy}} {{join("misc", "limine", "limine-uefi-cd.bin")}} {{join(_isoroot, "boot", "limine")}}
     {{copy}} {{_kernel_bin}} {{join(_isoroot, "boot")}}
     {{copy}} {{join("out", "initrd.cpio")}} {{join(_isoroot, "boot")}}
     {{wsl}} xorriso -as mkisofs \
-        -b boot/limine/limine-cd.bin \
+        -b boot/limine/limine-bios-cd.bin \
         -no-emul-boot -boot-load-size 4 -boot-info-table \
-        --efi-boot boot/limine/limine-cd-efi.bin \
+        --efi-boot boot/limine/limine-uefi-cd.bin \
         -efi-boot-part --efi-boot-image --protective-msdos-label \
         out/isoroot -o 9x.iso
-    limine-deploy 9x.iso
+    limine bios-install 9x.iso
     echo Done!
 
 # Builds and x86_64 9x PXE boot environment using the Limine bootloader
@@ -95,13 +96,68 @@ test_program_dir := join("out", "initrd", "bin", "sys")
     echo - Building initrd...
     {{copy}} {{join("initrd", "test_program", "out", "test_program")}} {{test_program_dir}}
     {{copy}} {{join("initrd", "test_zig_program", "out", "test_zig_program")}} {{test_program_dir}}
-    cd {{join("out", "initrd")}} && tar -c --format cpio -f {{join("..", "initrd.cpio")}} *
+    just _build-initrd-cpio
+
+# just _build-cpio {{join("out", "initrd")}} {{join("..", "initrd.cpio")}}
+
+[windows]
+@_build-initrd-cpio:
+    cd out\initrd && tar -c --format cpio -f ..\initrd.cpio *
+
+[unix]
+@_build-initrd-cpio:
+    cd out/initrd && find * -depth -print | cpio --format=odc -o >../initrd.cpio
 
 @_clean-output:
-    {{rm}} 9x.iso {{silence_stderr}}
-    {{rm}} 9x.img {{silence_stderr}}
-    {{rmdir}} out {{silence_stderr}}
+    {{rm}} 9x.iso {{silence_stderr}} || true
+    {{rm}} 9x.img {{silence_stderr}} || true
+    {{rmdir}} out {{silence_stderr}} || true
     mkdir out
 
+[windows]
+[linux]
 @_zig-build dir *args:
     cd {{dir}} && zig build {{args}} {{zig_build_end}}
+
+[macos]
+@_zig-build dir *args:
+    true
+
+# Rust compilation
+
+target_start := "--target targets/"
+target_end := "-unknown-kernel.json"
+_rust_kernel_out_dir := join("kernel_rust", "target", "x86_64-unknown-kernel", "debug")
+_rust_kernel_bin := join(_rust_kernel_out_dir, "kernel")
+_rust_unstripped_kernel_bin := join(_rust_kernel_out_dir, "kernel_unstripped")
+
+# Builds and x86_64 9x Rust iso (EXPERIMENTAL) using the Limine bootloader
+@build-x86_64-limine-rust: (_compile-rust-kernel "x86_64") _clean-output (_build-initrd _x64_target)
+    echo - Building ISO...
+    {{mkdir_create_parents}} {{join(_isoroot, "boot", "limine")}}
+    {{copy}} {{join("misc", "limine.cfg")}} {{join(_isoroot, "boot")}}
+    {{copy}} {{join("misc", "limine", "limine-bios.sys")}} {{join(_isoroot, "boot")}}
+    {{copy}} {{join("misc", "limine", "limine-bios-cd.bin")}} {{join(_isoroot, "boot", "limine")}}
+    {{copy}} {{join("misc", "limine", "limine-uefi-cd.bin")}} {{join(_isoroot, "boot", "limine")}}
+    {{copy}} {{_rust_kernel_bin}} {{join(_isoroot, "boot")}}
+    {{copy}} {{join("out", "initrd.cpio")}} {{join(_isoroot, "boot")}}
+    {{wsl}} xorriso -as mkisofs \
+        -b boot/limine/limine-bios-cd.bin \
+        -no-emul-boot -boot-load-size 4 -boot-info-table \
+        --efi-boot boot/limine/limine-uefi-cd.bin \
+        -efi-boot-part --efi-boot-image --protective-msdos-label \
+        out/isoroot -o 9x.iso
+    limine bios-install 9x.iso
+    echo Done!
+
+@_compile-rust-kernel arch +flags="":
+    echo - Compiling kernel...
+    cd kernel_rust && cargo +nightly build {{target_start + arch + target_end}} {{flags}}
+    cd {{_rust_kernel_out_dir}} && ld.lld \
+        --whole-archive libkernel.a \
+        -T../../../targets/x86_64-unknown-kernel.ld \
+        --gc-sections \
+        -o kernel_unstripped
+    cd {{_rust_kernel_out_dir}} && llvm-objcopy --strip-debug kernel_unstripped kernel
+    llvm-objcopy --only-keep-debug {{_rust_unstripped_kernel_bin}} dev/kernel.sym
+    {{ if os == "windows" { "extract_bochssyms" } else { "./extract_bochssyms.sh" } }}

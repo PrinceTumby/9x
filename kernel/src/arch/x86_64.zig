@@ -91,11 +91,11 @@ pub fn stage2Init(args: *KernelArgs) void {
     if (acpica.subsystem.initialiseSubsystem().isErr()) {
         @panic("initialising ACPI subsystem failed");
     }
-    logger.debug("Initalised ACPI subsystem", .{});
+    logger.debug("Initialised ACPI subsystem", .{});
     if (acpica.table_manager.initialiseTables(null, 16, false).isErr()) {
         @panic("initialising ACPI tables failed");
     }
-    logger.debug("Initalised ACPI tables", .{});
+    logger.debug("Initialised ACPI tables", .{});
     // Initialise interrupts
     var madt: *platform.acpi.Madt = undefined;
     clock_manager.updateClockFunctions();

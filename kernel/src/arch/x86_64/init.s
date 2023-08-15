@@ -52,9 +52,9 @@ GDT64:
 .global init64
 .type init64, @function
 init64:
+    xchgw %bx, %bx
     cli
     cld
-// hlt
     andq $~0xF, %rsp
     movq %rsp, %rbp
 
