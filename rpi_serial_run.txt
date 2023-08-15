@@ -1,1 +1,0 @@
-build arm-rpi && copy out\kernel.hex COM5 && plink -load "Raspberry Pi"
