@@ -37,8 +37,8 @@ impl Stack {
         Self([0; 4096])
     }
 
-    pub const fn get_end_address(&self) -> *const u8 {
-        (&self.0 as *const u8).wrapping_add(self.0.len() & !0xF)
+    pub const fn get_end_address(ptr: *const Self) -> *const u8 {
+        unsafe { (ptr as *const u8).wrapping_add((*ptr).0.len() & !0xF) }
     }
 }
 
@@ -55,14 +55,14 @@ mod stacks {
 
 pub static KERNEL_TSS: KernelTss = KernelTss {
     privilege_stack_table: PrivilegeStacks {
-        system_call: unsafe { stacks::SYSTEM_CALL_STACK.get_end_address() },
+        system_call: Stack::get_end_address(&raw const stacks::SYSTEM_CALL_STACK),
         _unused: [0; 2],
     },
     interrupt_stack_table: InterruptStacks {
-        generic: unsafe { stacks::GENERIC.get_end_address() },
-        double_fault: unsafe { stacks::DOUBLE_FAULT.get_end_address() },
-        page_fault: unsafe { stacks::PAGE_FAULT.get_end_address() },
-        general_protection_fault: unsafe { stacks::GENERAL_PROTECTION_FAULT.get_end_address() },
+        generic: Stack::get_end_address(&raw const stacks::GENERIC),
+        double_fault: Stack::get_end_address(&raw const stacks::DOUBLE_FAULT),
+        page_fault: Stack::get_end_address(&raw const stacks::PAGE_FAULT),
+        general_protection_fault: Stack::get_end_address(&raw const stacks::GENERAL_PROTECTION_FAULT),
         _unused: [0; 3],
     },
     iopb_base: memoffset::offset_of!(KernelTss, iopb) as u16,

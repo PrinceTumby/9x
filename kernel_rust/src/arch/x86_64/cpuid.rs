@@ -14,8 +14,9 @@ pub struct CpuidInfo {
 
 static mut CPUID_INFO: Option<CpuidInfo> = None;
 
-/// Populates internal information with calls to CPUID. Caller guarantees no references exist to
-/// CPUID_INFO, and that no other thread is accessing CPU_ID.
+/// Populates internal information with calls to CPUID.
+/// Caller guarantees no references exist to CPUID_INFO, and that no other thread is accessing
+/// CPUID_INFO.
 pub unsafe fn generate_info() {
     // Supported levels and CPU Vendor ID
     let (standard_maximum_level, cpu_vendor_id) = {
@@ -54,6 +55,7 @@ pub unsafe fn generate_info() {
 }
 
 pub fn get_info() -> &'static CpuidInfo {
+    #[allow(static_mut_refs)]
     unsafe { CPUID_INFO.as_ref().unwrap() }
 }
 

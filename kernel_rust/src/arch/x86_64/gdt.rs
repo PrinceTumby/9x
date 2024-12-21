@@ -83,8 +83,8 @@ pub unsafe fn inject_tss_and_load() {
     }
     // Load GDT
     let ptr = DescriptorTablePointer::new(
-        &KERNEL_GDT as *const KernelGdt as u64,
-        core::mem::size_of_val(&KERNEL_GDT) as u16 - 1,
+        &raw const KERNEL_GDT as u64,
+        core::mem::size_of_val(&*&raw const KERNEL_GDT) as u16 - 1,
     );
     asm!("lgdt [{}]", in(reg) ptr.as_ptr());
     // Reload segment descriptors and load TSS

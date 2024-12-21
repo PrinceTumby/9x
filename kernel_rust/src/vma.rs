@@ -16,7 +16,7 @@ pub struct Segment {
     pub flags: SegmentFlags,
 }
 
-// TODO Replace this with a bitfield structure to be taken straight from syscall
+// TODO: Replace this with a bitfield structure, to be taken straight from syscall
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegmentFlags {

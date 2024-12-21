@@ -4,7 +4,8 @@ use crate::arch::kernel_args::MutSlice;
 use crate::arch::paging::{align_to_page, PageTable, PageTableEntry, PAGE_SIZE};
 use core::arch::asm;
 use core::ops::{Deref, DerefMut};
-use core::ptr::{NonNull, Unique};
+use core::ptr::NonNull;
+use core::marker::PhantomData;
 use spin::Mutex;
 use thiserror_no_std::Error;
 
@@ -64,12 +65,12 @@ pub fn used_pages() -> usize {
 }
 
 /// Attempts to reserve a free page. Returns the physical address if a page is found.
-pub fn find_and_reserve_page() -> Result<PhysicalPage, ()> {
+pub fn find_and_reserve_page() -> Result<OwnedPhysicalPage, ()> {
     let mut lock = PAGE_ALLOCATOR.lock();
     let page_allocator = lock.as_mut().unwrap();
     page_allocator
         .find_and_reserve_page()
-        .map(|ptr| PhysicalPage(Unique::from(ptr)))
+        .map(|ptr| OwnedPhysicalPage::from_non_null(ptr))
 }
 
 /// Marks a page as no longer reserved.
@@ -130,50 +131,65 @@ pub unsafe fn load_kernel_address_space() {
     page_allocator.load_address_space();
 }
 
-pub struct PhysicalPage(Unique<RawPage>);
+pub struct OwnedPhysicalPage {
+    pointer: NonNull<RawPage>,
+    _marker: PhantomData<RawPage>,
+}
 
-impl PhysicalPage {
+impl OwnedPhysicalPage {
     #[must_use]
     pub unsafe fn from_raw(raw: *mut RawPage) -> Self {
-        Self(Unique::new_unchecked(raw))
+        Self {
+            pointer: NonNull::new_unchecked(raw),
+            _marker: PhantomData,
+        }
     }
 
+    #[must_use]
+    pub fn from_non_null(ptr: NonNull<RawPage>) -> Self {
+        Self {
+            pointer: ptr,
+            _marker: PhantomData,
+        }
+    }
+
+    #[must_use]
     pub fn into_raw(self) -> *mut RawPage {
-        let return_ptr = self.0.as_ptr();
+        let return_ptr = self.pointer.as_ptr();
         core::mem::forget(self);
         return_ptr
     }
 }
 
-impl Drop for PhysicalPage {
+impl Drop for OwnedPhysicalPage {
     fn drop(&mut self) {
         let mut lock = PAGE_ALLOCATOR.lock();
         let page_allocator = lock.as_mut().unwrap();
-        page_allocator.free_page(self.0.as_ptr() as usize)
+        page_allocator.free_page(self.pointer.as_ptr() as usize)
     }
 }
 
-impl Deref for PhysicalPage {
+impl Deref for OwnedPhysicalPage {
     type Target = RawPage;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { self.0.as_ref() }
+        unsafe { self.pointer.as_ref() }
     }
 }
 
-impl DerefMut for PhysicalPage {
+impl DerefMut for OwnedPhysicalPage {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.0.as_mut() }
+        unsafe { self.pointer.as_mut() }
     }
 }
 
-impl AsRef<RawPage> for PhysicalPage {
+impl AsRef<RawPage> for OwnedPhysicalPage {
     fn as_ref(&self) -> &RawPage {
         &*self
     }
 }
 
-impl AsMut<RawPage> for PhysicalPage {
+impl AsMut<RawPage> for OwnedPhysicalPage {
     fn as_mut(&mut self) -> &mut RawPage {
         &mut *self
     }

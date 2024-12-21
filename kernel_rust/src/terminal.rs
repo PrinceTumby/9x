@@ -50,7 +50,7 @@ pub mod psf {
     }
 
     impl<'a> Font<'a> {
-        pub fn new(file: &'a [u8]) -> Result<Self, &str> {
+        pub fn new(file: &'a [u8]) -> Result<Self, &'a str> {
             let header_slice = &file[0..size_of::<Header>()];
             let header = Header::from_bytes(header_slice.try_into().map_err(|_| "file too small")?)
                 .map_err(|_| "invalid magic")?;

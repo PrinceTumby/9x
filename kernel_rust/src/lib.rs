@@ -3,8 +3,6 @@
 #![warn(clippy::all)]
 // Needed for `next_multiple_of`, used for aligning addresses upward
 #![feature(int_roundings)]
-// Used to export offsets of struct fields for assembly to use
-#![feature(asm_const)]
 // Used in in `x86_64`
 #![feature(abi_x86_interrupt)]
 // Used for giving a custom panic message on allocation errors
@@ -14,8 +12,6 @@
 #![feature(allocator_api)]
 // Used in ACPI for defining implementations of `AcpiOsPrintf` and `AcpiOsVprintf`
 #![feature(c_variadic)]
-// Used in architecture page allocators
-#![feature(ptr_internals)]
 
 pub mod arch;
 pub mod core_graphics;
@@ -150,12 +146,7 @@ pub extern "C" fn kernel_main(args: &arch::kernel_args::Args) -> ! {
     unsafe {
         arch::init_stage_2(args);
     }
-    if let Some(terminal) = terminal::TERMINAL.lock().as_mut() {
-        use core::fmt::Write;
-        for i in 0..5 {
-            _ = terminal.write_fmt(format_args!("[DEBUG] (test_process) Hello from PID {i}!\r\n"));
-        }
-    }
+    debug!("Finished, entering infinite loop!");
     loop {}
 }
 

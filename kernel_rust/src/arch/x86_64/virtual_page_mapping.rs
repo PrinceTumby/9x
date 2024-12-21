@@ -1,9 +1,9 @@
-use super::page_allocation::{self, PhysicalPage};
+use super::page_allocation::{self, OwnedPhysicalPage};
 use super::paging::{align_to_page, PageTable, PageTableEntry};
 use core::mem::transmute;
 
 pub struct VirtualPageMapper {
-    pml4: PhysicalPage,
+    pml4: OwnedPhysicalPage,
 }
 
 impl VirtualPageMapper {

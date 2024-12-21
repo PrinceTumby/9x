@@ -1,4 +1,4 @@
-use crate::arch::page_allocation::{self, PhysicalPage, RawPage};
+use crate::arch::page_allocation::{self, OwnedPhysicalPage, RawPage};
 use crate::arch::paging::PAGE_SIZE;
 use alloc::alloc::{AllocError, Allocator, Layout};
 use alloc::boxed::Box;
@@ -25,7 +25,7 @@ unsafe impl Allocator for PhysicalBlockAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
-        drop(PhysicalPage::from_raw(ptr.as_ptr() as *mut RawPage));
+        drop(OwnedPhysicalPage::from_raw(ptr.as_ptr() as *mut RawPage));
     }
 }
 

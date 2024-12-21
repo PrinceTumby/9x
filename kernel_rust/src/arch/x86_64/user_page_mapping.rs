@@ -1,4 +1,4 @@
-use super::page_allocation::{self, PhysicalPage};
+use super::page_allocation::{self, OwnedPhysicalPage};
 use super::paging::{align_to_page, PageTable, PageTableEntry};
 use core::mem::transmute;
 use core::task::Poll;
@@ -60,7 +60,7 @@ pub enum UserPageMapperError {
 }
 
 pub struct UserPageMapper {
-    pml4: PhysicalPage,
+    pml4: OwnedPhysicalPage,
 }
 
 impl UserPageMapper {

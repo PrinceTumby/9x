@@ -7,7 +7,7 @@ use super::page_allocation;
 use super::paging::PageTableEntry;
 use crate::define_asm_symbol;
 use core::mem::MaybeUninit;
-use core::ptr::{addr_of, addr_of_mut, NonNull};
+use core::ptr::NonNull;
 use define_asm_symbol::export_asm_all;
 
 pub struct ThreadLocalStorage {
@@ -128,29 +128,29 @@ extern "C" {
 /// Initialises the thread local storage. Must only be called once.
 pub unsafe fn init() {
     let tls_size = core::mem::size_of::<ThreadLocalStorage>();
-    let start_address = &TLS as *const ThreadLocalStorage as usize & !0xFFF;
+    let start_address = &raw const TLS as usize & !0xFFF;
     for address in (start_address..start_address + tls_size).step_by(4096) {
         page_allocation::map_page(address, PageTableEntry::READ_WRITE)
             .expect("failed to allocate thread local storage");
         log::debug!("Allocated TLS page at {address:#x}");
     }
     TLS = ThreadLocalStorage {
-        self_pointer: NonNull::from(&mut TLS),
+        self_pointer: NonNull::new(&raw mut TLS).unwrap(),
         local_apic: Default::default(),
         idt: InterruptDescriptorTable::new(),
         yield_info: Default::default(),
     };
-    msr::write(msr::GS_BASE, &TLS as *const ThreadLocalStorage as u64);
+    msr::write(msr::GS_BASE, &raw const TLS as u64);
 }
 
 /// Returns a pointer to the thread local storage.
 #[inline]
 pub fn get() -> *const ThreadLocalStorage {
-    unsafe { addr_of!(TLS) }
+    &raw const TLS
 }
 
 /// Returns a mutable pointer to the thread local storage.
 #[inline]
 pub fn get_mut() -> *mut ThreadLocalStorage {
-    unsafe { addr_of_mut!(TLS) }
+    &raw mut TLS
 }

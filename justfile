@@ -152,7 +152,7 @@ _rust_unstripped_kernel_bin := join(_rust_kernel_out_dir, "kernel_unstripped")
 
 @_compile-rust-kernel arch +flags="":
     echo - Compiling kernel...
-    cd kernel_rust && cargo +nightly build {{target_start + arch + target_end}} {{flags}}
+    cd kernel_rust && cargo build {{target_start + arch + target_end}} {{flags}}
     cd {{_rust_kernel_out_dir}} && ld.lld \
         --whole-archive libkernel.a \
         -T../../../targets/x86_64-unknown-kernel.ld \
