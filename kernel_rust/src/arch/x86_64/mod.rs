@@ -292,12 +292,12 @@ pub unsafe fn init_stage_2(args: &kernel_args::Args) {
             .update_clock_functions(&CALIBRATION_TIMERS.lock(), &TIMERS.lock());
         log::debug!("Initialised Local APIC Timer");
     }
-    {
-        // DEBUG
-        (clock::MANAGER.lock().timer.set_interrupt_type)(&clock::InterruptType::Sleep);
-        for i in 0..=10 {
-            log::debug!("{i}");
-            (clock::MANAGER.lock().timer.sleep_ms)(1000);
-        }
-    }
+    // {
+    //     // DEBUG
+    //     (clock::MANAGER.lock().timer.set_interrupt_type)(&clock::InterruptType::Sleep);
+    //     for i in 0..=10 {
+    //         log::debug!("{i}");
+    //         (clock::MANAGER.lock().timer.sleep_ms)(1000);
+    //     }
+    // }
 }

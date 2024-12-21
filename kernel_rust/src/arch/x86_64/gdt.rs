@@ -90,10 +90,10 @@ pub unsafe fn inject_tss_and_load() {
     // Reload segment descriptors and load TSS
     asm!(
         "push 8",
-        "lea rax, [rip + 0f]",
+        "lea rax, [rip + 2f]",
         "push rax",
         "retfq",
-        "0:",
+        "2:",
         "mov ax, 16",
         "mov ds, ax",
         "mov es, ax",

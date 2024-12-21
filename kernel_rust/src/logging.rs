@@ -30,7 +30,11 @@ impl log::Log for LogWrapper {
         }
     }
 
-    fn flush(&self) {}
+    fn flush(&self) {
+        if let Some(logger) = CURRENT_LOGGER.lock().as_ref() {
+            logger.flush();
+        }
+    }
 }
 
 pub static KERNEL_LOGGER: KernelLogger = KernelLogger;

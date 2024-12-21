@@ -44,7 +44,7 @@ pub struct VMAAllocator {
     tree: VMATree,
 }
 
-// TODO NEXT Change pretty much all of this:
+// TODO: Change pretty much all of this:
 // 1. Remove force_map_at, it just isn't needed and complicates the kernel a lot. This then allows
 //    for rewriting the state machine to be just scanning and mapping. Also makes things much
 //    easier to make atomic whenever multithreaded gets implemented.

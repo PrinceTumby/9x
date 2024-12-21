@@ -18,6 +18,14 @@ Big ideas:
 - RDBMS for the filesystem? Think MySQL can use raw partitions. Might be an easy way to get a decent filesystem up
   and running.
 
+Random ideas:
+- Don't do IPC using process IDs, use handles instead for a layer of indirection. Also add permissions.
+
+Bitrot stuff:
+- mem::offset_of! is now stable, so we can remove the feature
+- mem::offset_of! doesn't need #[repr(C)], so we can potentially gain a type layout win by removing that
+- Check other features to see if they've been stabilised
+
 Practical stuff:
 - Finish multiboot implementation
 - Implement KASLR

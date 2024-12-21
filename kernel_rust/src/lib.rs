@@ -150,6 +150,12 @@ pub extern "C" fn kernel_main(args: &arch::kernel_args::Args) -> ! {
     unsafe {
         arch::init_stage_2(args);
     }
+    if let Some(terminal) = terminal::TERMINAL.lock().as_mut() {
+        use core::fmt::Write;
+        for i in 0..5 {
+            _ = terminal.write_fmt(format_args!("[DEBUG] (test_process) Hello from PID {i}!\r\n"));
+        }
+    }
     loop {}
 }
 
