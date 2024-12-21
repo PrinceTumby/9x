@@ -12,7 +12,7 @@
 // Kernel entry point for 32 bit compatible Raspberry Pis
 // Registers at start:
 // r15 -> should begin execution at 0x8000
-// r0 => 0
+// r0 -> 0
 // r1 -> 0xC42 - machine ID
 // r2 -> 0x100 - start of ATAGS
 .global _start
