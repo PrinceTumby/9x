@@ -1,1 +1,0 @@
-System\Library\CoreServices\boot.efi

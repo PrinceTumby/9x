@@ -25,7 +25,7 @@ _unstripped_kernel_bin := join(_kernel_out_dir, "kernel_unstripped")
 @build-x86_64-limine: (_compile-kernel "x86_64") _clean-output (_build-initrd "x86_64-freestanding-gnu")
     echo - Building ISO...
     {{mkdir_create_parents}} {{join(_isoroot, "boot", "limine")}}
-    {{copy}} {{join("misc", "limine.cfg")}} {{join(_isoroot, "boot")}}
+    {{copy}} {{join("misc", "limine.conf")}} {{join(_isoroot, "boot")}}
     {{copy}} {{join("misc", "limine", "limine-bios.sys")}} {{join(_isoroot, "boot")}}
     {{copy}} {{join("misc", "limine", "limine-bios-cd.bin")}} {{join(_isoroot, "boot", "limine")}}
     {{copy}} {{join("misc", "limine", "limine-uefi-cd.bin")}} {{join(_isoroot, "boot", "limine")}}
