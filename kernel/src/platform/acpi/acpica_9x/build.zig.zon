@@ -1,0 +1,14 @@
+// Basic package information, just used to tell `anyzig` what Zig version we want.
+.{
+    .name = .acpica_9x,
+    .version = "0.0.0",
+    .fingerprint = 0x5a54286af56b6fe7,
+    .minimum_zig_version = "0.15.1",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "acpica",
+        "source_override",
+        "include_override",
+    },
+}

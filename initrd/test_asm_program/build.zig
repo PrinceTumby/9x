@@ -5,13 +5,13 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "test_zig_program",
+        .name = "test_asm_program",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
+    exe.root_module.addAssemblyFile(b.path("src/main.s"));
 
     b.installArtifact(exe);
 }

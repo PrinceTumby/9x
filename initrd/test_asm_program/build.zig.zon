@@ -1,0 +1,12 @@
+// Basic package information, just used to tell `anyzig` what Zig version we want.
+.{
+    .name = .test_asm_program_9x,
+    .version = "0.0.0",
+    .fingerprint = 0x9628d5bc2ea1ffd2,
+    .minimum_zig_version = "0.15.1",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

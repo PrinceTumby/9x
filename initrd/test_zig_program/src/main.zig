@@ -1,8 +1,6 @@
 const std = @import("std");
 const serial = @import("serial.zig");
 
-const logger = std.log.scoped(.main);
-
 const syscall = struct {
     pub const Error = error{
         UnknownSyscall,
@@ -13,7 +11,7 @@ const syscall = struct {
 
     fn errorFromNegativeValue(value: usize) Error {
         // logger.debug("Translating {}", .{-%(value +% 1)});
-        return switch (@intToEnum(ErrorValue, -%(value +% 1))) {
+        return switch (@as(ErrorValue, @enumFromInt(-%(value +% 1)))) {
             .unknown_syscall => Error.UnknownSyscall,
             .invalid_argument => Error.InvalidArgument,
             .out_of_memory => Error.OutOfMemory,
@@ -38,35 +36,35 @@ const syscall = struct {
 
     pub fn getPid() usize {
         return asm ("syscall"
-            : [out] "={rax}" (-> usize)
-            : [syscall] "{rax}" (@enumToInt(Syscall.get_pid))
-            : "rcx", "r11"
+            : [out] "={rax}" (-> usize),
+            : [syscall] "{rax}" (@intFromEnum(Syscall.get_pid)),
+            : .{ .rcx = true, .r11 = true }
         );
     }
 
     pub fn setBreak(new_break_address: usize) !usize {
-        const addr_or_err = asm ("syscall"
-            : [out] "={rax}" (-> usize)
-            : [syscall] "{rax}" (@enumToInt(Syscall.set_break)),
-              [new_break_address] "{rdi}" (new_break_address)
-            : "rcx", "r11", "memory"
+        const addr_or_err = asm volatile ("syscall"
+            : [out] "={rax}" (-> usize),
+            : [syscall] "{rax}" (@intFromEnum(Syscall.set_break)),
+              [new_break_address] "{rdi}" (new_break_address),
+            : .{ .rcx = true, .r11 = true, .memory = true }
         );
-        const isize_return = @bitCast(isize, addr_or_err);
+        const isize_return: isize = @bitCast(addr_or_err);
         if (-128 <= isize_return and isize_return <= -1) {
-            return errorFromNegativeValue(return_value);
+            return errorFromNegativeValue(addr_or_err);
         } else {
-            return return_value;
+            return addr_or_err;
         }
     }
 
     pub fn moveBreak(move_delta: isize) !usize {
         const addr_or_err = asm ("syscall"
-            : [out] "={rax}" (-> usize)
-            : [syscall] "{rax}" (@enumToInt(Syscall.move_break)),
-              [move_delta] "{rdi}" (move_delta)
-            : "rcx", "r11", "memory"
+            : [out] "={rax}" (-> usize),
+            : [syscall] "{rax}" (@intFromEnum(Syscall.move_break)),
+              [move_delta] "{rdi}" (move_delta),
+            : .{ .rcx = true, .r11 = true, .memory = true }
         );
-        const isize_return = @bitCast(isize, addr_or_err);
+        const isize_return: isize = @bitCast(addr_or_err);
         if (-128 <= isize_return and isize_return <= -1) {
             return errorFromNegativeValue(addr_or_err);
         } else {
@@ -76,54 +74,64 @@ const syscall = struct {
 
     pub fn debugKernelPrint(message: []const u8) void {
         _ = asm volatile ("syscall"
-            : [out] "={rax}" (-> usize)
-            : [syscall] "{rax}" (@enumToInt(Syscall.debug)),
-              [message_ptr] "{rdi}" (@ptrToInt(message.ptr)),
-              [message_len] "{rsi}" (message.len)
-            : "rcx", "r11"
+            : [out] "={rax}" (-> usize),
+            : [syscall] "{rax}" (@intFromEnum(Syscall.debug)),
+              [message_ptr] "{rdi}" (message.ptr),
+              [message_len] "{rsi}" (message.len),
+            : .{ .rcx = true, .r11 = true }
         );
     }
 };
 
-const KernelDebugWriter = struct {
-    var write_buffer: [256]u8 = undefined;
-
-    pub const Error = error{};
-
-    pub fn writeAll(self: KernelDebugWriter, bytes: []const u8) Error!void {
-        syscall.debugKernelPrint(bytes);
-    }
-
-    pub fn writeByte(self: KernelDebugWriter, byte: u8) Error!void {
-        const char = [1]u8{byte};
-        syscall.debugKernelPrint(&char);
-    }
-
-    pub fn writeByteNTimes(self: KernelDebugWriter, byte: u8, n: usize) Error!void {
-        std.mem.set(u8, write_buffer[0..], byte);
-
-        var remaining: usize = n;
-        while (remaining > 0) {
-            const to_write = std.math.min(remaining, write_buffer.len);
-            syscall.debugKernelPrint(write_buffer[0..to_write]);
-            remaining -= to_write;
+fn kernelDebugWriterDrain(w: *std.io.Writer, data: []const []const u8, splat: usize) std.io.Writer.Error!usize {
+    // Write buffered data.
+    const initial_data = w.buffer[0..w.end];
+    syscall.debugKernelPrint(initial_data);
+    w.end = 0;
+    // Write rest of the data.
+    var data_bytes_written: usize = 0;
+    if (data.len > 1) {
+        for (data[0..data.len - 1]) |data_slice| {
+            syscall.debugKernelPrint(data_slice);
+            data_bytes_written += data_slice.len;
         }
     }
-};
+    for (0..splat) |i| {
+        _ = i;
+        const data_slice = data[data.len - 1];
+        syscall.debugKernelPrint(data_slice);
+        data_bytes_written += data_slice.len;
+    }
+    return data_bytes_written;
+}
 
-const kernel_debug_writer = KernelDebugWriter{};
+var kernel_debug_writer_buffer: [256]u8 = undefined;
+var kernel_debug_writer = std.io.Writer{
+    .vtable = &.{
+        .drain = &kernelDebugWriterDrain,
+    },
+    .buffer = &kernel_debug_writer_buffer,
+};
 
 pub const log_level: std.log.Level = .debug;
 
-pub fn log(
+fn customLog(
     comptime level: std.log.Level,
-    comptime scope: @TypeOf(.EnumLiteral),
+    comptime scope: @TypeOf(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const prefix = "[test_zig_program - " ++ @tagName(level) ++ "] (" ++ @tagName(scope) ++ "): ";
-    std.fmt.format(kernel_debug_writer, prefix ++ format ++ "\n", args) catch {};
+    const scope_prefix = "(" ++ @tagName(scope) ++ "): ";
+    const prefix = "[test_zig_program - " ++ comptime level.asText() ++ "]" ++ scope_prefix;
+    kernel_debug_writer.print(prefix ++ format ++ "\n", args) catch {};
 }
+
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+    .logFn = customLog,
+};
+
+const logger = std.log.scoped(.main);
 
 export fn _start() void {
     logger.debug("Hello from usermode Zig!", .{});
@@ -132,7 +140,7 @@ export fn _start() void {
     // for ("Hello world!\r\n") |byte| serial.Com1.writeByte(byte);
     // logger.debug("COM1 test succeeded!", .{});
     runHeapTests() catch |err| {
-        logger.emerg("Heap testing returned {}", .{err});
+        logger.err("Heap testing returned {}", .{err});
         @panic("heap testing failed");
     };
     while (true) {
@@ -143,8 +151,8 @@ export fn _start() void {
 fn runHeapTests() !void {
     logger.debug("Heap tests!", .{});
     logger.debug("Current program break: 0x{x}", .{try syscall.moveBreak(0)});
-    const ptr_1 = @intToPtr(*u64, try syscall.moveBreak(8));
-    const ptr_2 = @intToPtr(*u64, try syscall.moveBreak(8));
+    const ptr_1: *u64 = @ptrFromInt(try syscall.moveBreak(8));
+    const ptr_2: *u64 = @ptrFromInt(try syscall.moveBreak(8));
     logger.debug("{*}, {*}", .{ ptr_1, ptr_2 });
     ptr_1.* = 1;
     ptr_2.* = 2;
@@ -154,7 +162,10 @@ fn runHeapTests() !void {
     logger.debug("Tests done!", .{});
 }
 
-pub fn panic(message: []const u8, trace_maybe: ?*std.builtin.StackTrace) noreturn {
-    logger.emerg("{s}", .{message});
+pub const panic = std.debug.FullPanic(customPanic);
+
+fn customPanic(message: []const u8, first_trace_addr: ?usize) noreturn {
+    _ = first_trace_addr;
+    logger.err("Panic - {s}", .{message});
     while (true) {}
 }

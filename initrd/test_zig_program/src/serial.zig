@@ -1,17 +1,15 @@
 pub inline fn portReadByte(port_num: u16) u8 {
-    return asm volatile (
-        "inb %[port], %[out]"
-        : [out] "={al}" (-> u8)
-        : [port] "{dx}" (port_num)
+    return asm volatile ("inb %[port], %[out]"
+        : [out] "={al}" (-> u8),
+        : [port] "{dx}" (port_num),
     );
 }
 
 pub inline fn portWriteByte(port_num: u16, byte: u8) void {
-    asm volatile (
-        "outb %[byte], %[port]"
+    asm volatile ("outb %[byte], %[port]"
         :
         : [byte] "{al}" (byte),
-          [port] "{dx}" (port_num)
+          [port] "{dx}" (port_num),
     );
 }
 
@@ -30,7 +28,7 @@ pub fn Port(comptime port: u16) type {
 
         const Self = @This();
 
-        // TODO Implement checking if serial port is already initialised
+        // TODO: Implement checking if serial port is already initialised
         pub fn init() bool {
             // Check if port exists by writing to scratch register
             const scratch_incremented = portReadByte(scratch_reg) +% 1;
@@ -61,27 +59,30 @@ pub fn Port(comptime port: u16) type {
         pub inline fn readByte() u8 {
             // Wait until serial port ready
             while (asm volatile ("inb %[line_status_reg], %[out]"
-                    : [out] "={al}" (-> u8)
-                    : [line_status_reg] "{dx}" (line_status_reg)
+                : [out] "={al}" (-> u8),
+                : [line_status_reg] "{dx}" (line_status_reg),
             ) & 0x01 == 0) {}
 
             // Receive byte
             return asm ("inb %%dx, %[out]"
-                : [out] "={al}" (-> u8)
-                : [data] "{dx}" (data));
+                : [out] "={al}" (-> u8),
+                : [data] "{dx}" (data),
+            );
         }
 
         pub inline fn writeByte(byte: u8) void {
             // Wait until serial port ready
             while (asm volatile ("inb %[line_status_reg], %[out]"
-                    : [out] "={al}" (-> u8)
-                    : [line_status_reg] "{dx}" (line_status_reg)
+                : [out] "={al}" (-> u8),
+                : [line_status_reg] "{dx}" (line_status_reg),
             ) & 0x20 == 0) {}
 
             // Send byte
-            asm volatile ("outb %[byte], %[data]" 
+            asm volatile ("outb %[byte], %[data]"
                 :
-                : [byte] "{al}" (byte), [data] "{dx}" (data));
+                : [byte] "{al}" (byte),
+                  [data] "{dx}" (data),
+            );
         }
     };
 }

@@ -3,38 +3,40 @@ const Builder = std.build.Builder;
 const Target = std.Target;
 const CrossTarget = std.zig.CrossTarget;
 
-pub fn build(b: *Builder) void {
-    const build_mode = b.standardReleaseOptions();
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
-    const out_dir = b.option([]const u8, "out-dir", "Sets the output directory.") orelse "out";
-
-    const acpica = b.addStaticLibrary("acpica", null);
-    acpica.addCSourceFiles(&acpica_files, &.{
-        "-U_LINUX",
-        "-U__linux__",
-        "-U__APPLE__",
-        "-nostdlib",
+    const acpica = b.addLibrary(.{
+        .name = "acpica",
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .pic = true,
+            .red_zone = false,
+        }),
     });
-    acpica.addIncludePath("include_override");
-    acpica.addIncludePath("acpica/source/include");
-    acpica.defineCMacro("__9x__", null);
-    acpica.defineCMacro("B_9X_64_BIT", null);
-    acpica.defineCMacro("DEBUG", "0");
-    acpica.setBuildMode(build_mode);
-    acpica.setTarget(CrossTarget{
-        .cpu_arch = Target.Cpu.Arch.x86_64,
-        .os_tag = Target.Os.Tag.freestanding,
-        .abi = Target.Abi.none,
+    acpica.root_module.addCSourceFiles(.{
+        .files = &acpica_source_files,
+        .flags = &.{
+            "-ffunction-sections",
+            "-U_LINUX",
+            "-U__linux__",
+            "-U__APPLE__",
+            "-nostdlib",
+        },
     });
-    acpica.setOutputDir(out_dir);
-    acpica.force_pic = true;
-    acpica.red_zone = false;
-    acpica.link_function_sections = true;
+    acpica.root_module.addIncludePath(b.path("include_override"));
+    acpica.root_module.addIncludePath(b.path("acpica/source/include"));
+    acpica.root_module.addCMacro("__9x__", "");
+    acpica.root_module.addCMacro("B_9X_64_BIT", "");
+    acpica.root_module.addCMacro("DEBUG", "0");
 
-    b.default_step.dependOn(&acpica.step);
+    b.installArtifact(acpica);
 }
 
-const acpica_files = [_][]const u8{
+const acpica_source_files = [_][]const u8{
     "acpica/source/components/dispatcher/dsargs.c",
     "acpica/source/components/dispatcher/dscontrol.c",
     "acpica/source/components/dispatcher/dsdebug.c",
@@ -162,6 +164,7 @@ const acpica_files = [_][]const u8{
     "acpica/source/components/utilities/utascii.c",
     "acpica/source/components/utilities/utbuffer.c",
     "acpica/source/components/utilities/utcache.c",
+    "acpica/source/components/utilities/utcksum.c",
     "acpica/source/components/utilities/utcopy.c",
     "acpica/source/components/utilities/utdebug.c",
     "acpica/source/components/utilities/utdecode.c",

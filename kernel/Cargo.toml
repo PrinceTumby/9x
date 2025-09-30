@@ -9,9 +9,8 @@ name = "kernel"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
+[[bin]]
 name = "kernel"
-crate-type = ["staticlib"]
 test = false
 bench = false
 
@@ -26,7 +25,12 @@ thiserror = { version = "2.0", default-features = false }
 
 [profile.dev]
 opt-level = 1
+debug = true
+# This is currently an accepted compiler proposal, but hasn't been implemented yet.
+# Once it has, we can finally get rid of our dependency on "cargo-binutils".
+# split-debuginfo = "post-link"
 
 [profile.release]
 lto = true
 codegen-units = 1
+# split-debuginfo = "post-link"

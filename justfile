@@ -1,6 +1,8 @@
 set shell := ["bash", "-uc"]
 set windows-shell := ["cmd.exe", "/c"]
 
+set ignore-comments
+
 os := os()
 os_family := os_family()
 
@@ -22,7 +24,7 @@ _kernel_bin := join(_kernel_out_dir, "kernel")
 _unstripped_kernel_bin := join(_kernel_out_dir, "kernel_unstripped")
 
 # Builds an x86_64 9x iso using the Limine bootloader
-@build-x86_64-limine: (_compile-kernel "x86_64") _clean-output (_build-initrd "x86_64-freestanding-gnu")
+@build-x86_64-limine: (_compile-kernel "x86_64") _clean-output (_build-initrd "x86_64-freestanding")
     echo - Building ISO...
     {{mkdir_create_parents}} {{join(_isoroot, "boot", "limine")}}
     {{copy}} {{join("misc", "limine.conf")}} {{join(_isoroot, "boot")}}
@@ -46,13 +48,8 @@ _unstripped_kernel_bin := join(_kernel_out_dir, "kernel_unstripped")
         --target {{"targets/" + arch + "-unknown-kernel.json"}} \
         -Zbuild-std=core,compiler_builtins,alloc \
         -Zbuild-std-features=compiler-builtins-mem
-    cd {{_kernel_out_dir}} && ld.lld \
-        --whole-archive libkernel.a \
-        -T../../../targets/x86_64-unknown-kernel.ld \
-        --gc-sections \
-        -o kernel_unstripped
-    cd {{_kernel_out_dir}} && llvm-objcopy --strip-debug kernel_unstripped kernel
-    llvm-objcopy --only-keep-debug {{_unstripped_kernel_bin}} dev/kernel.sym
+    rust-objcopy --only-keep-debug {{_kernel_bin}} dev/kernel.sym
+    rust-objcopy --strip-debug {{_kernel_bin}} {{_kernel_bin}}
     {{ if os == "windows" { "extract_bochssyms" } else { "./extract_bochssyms.sh" } }}
 
 # Helper recipes
@@ -63,11 +60,21 @@ test_program_dir := join("out", "initrd", "bin", "sys")
     echo - Copying base initrd template files...
     {{copydir}} {{join("initrd", "template")}} {{join("out", "initrd")}}
     echo - Compiling test programs...
-    just _zig-build {{join("initrd", "test_program")}} -Dtarget={{arch}} -Drelease-safe=true
-    just _zig-build {{join("initrd", "test_zig_program")}} -Dtarget={{arch}} -Drelease-safe=true
+    just _zig-build \
+        {{join("initrd", "test_zig_program")}} \
+        -Dtarget={{arch}} \
+        -Doptimize=ReleaseSafe
+    just _zig-build \
+        {{join("initrd", "test_zig_program")}} \
+        -Dtarget={{arch}} \
+        -Doptimize=ReleaseFast
     echo - Building initrd...
-    {{copy}} {{join("initrd", "test_program", "out", "test_program")}} {{test_program_dir}}
-    {{copy}} {{join("initrd", "test_zig_program", "out", "test_zig_program")}} {{test_program_dir}}
+    {{copy}} \
+        {{join("initrd", "test_asm_program", "zig-out", "bin", "test_asm_program")}} \
+        {{test_program_dir}}
+    {{copy}} \
+        {{join("initrd", "test_zig_program", "zig-out", "bin", "test_zig_program")}} \
+        {{test_program_dir}}
     just _build-initrd-cpio
 
 [windows]
@@ -85,4 +92,4 @@ test_program_dir := join("out", "initrd", "bin", "sys")
     mkdir out
 
 @_zig-build dir *args:
-    cd {{dir}} && zig 0.7.1 build {{args}}
+    cd {{dir}} && zig build {{args}}
