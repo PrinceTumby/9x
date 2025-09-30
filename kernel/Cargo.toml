@@ -1,6 +1,5 @@
 [workspace]
-resolver = '2'
-members = [ "crates/define-asm-symbol" ]
+members = ["crates/define-asm-symbol"]
 
 [workspace.dependencies]
 define-asm-symbol = { path = "crates/define-asm-symbol", version = "0.1.0" }

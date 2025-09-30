@@ -1,5 +1,5 @@
 zig-cache
-kernel_rust/.cargo
-kernel_rust/target
+kernel/.cargo
+kernel/target
 out
 9x.iso

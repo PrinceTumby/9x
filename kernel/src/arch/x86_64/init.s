@@ -52,72 +52,66 @@ GDT64:
 .global init64
 .type init64, @function
 init64:
-    xchgw %bx, %bx
     cli
     cld
-    andq $~0xF, %rsp
-    movq %rsp, %rbp
+    and rsp, ~0xF
+    mov rbp, rsp
 
     // -- GDT setup --
-    leaq GDT64(%rip), %rax
-    movq %rax, GDT64.Pointer.Ptr(%rip)
-    leaq GDT64.Pointer(%rip), %rax
-    lgdt (%rax)
-    pushq $8
-    leaq cs_set(%rip), %rax
-    pushq %rax
-    lretq
-    cs_set:
-    movw $16, %ax
-    movw %ax, %ds
-    movw %ax, %es
-    movw %ax, %ss
-    movw %ax, %fs
-    movw %ax, %gs
+    lea rax, [rip + offset GDT64]
+    mov [rip + offset GDT64.Pointer.Ptr], rax
+    lea rax, [rip + offset GDT64.Pointer]
+    lgdt [rax]
+    push 8
+    lea rax, [rip + offset cs_set]
+    push rax
+    retfq
+cs_set:
+    mov ax, 16 
+    mov ds, ax 
+    mov es, ax 
+    mov ss, ax 
+    mov fs, ax 
+    mov gs, ax 
 
     // -- Load new page table --
-    movq KernelArgs.page_table_ptr(%rdi), %rax
-    movq %rax, %cr3
+    mov rax, [rdi + offset "kernel_args::Args.page_table_address"]
+    mov cr3, rax
 
     // -- Control register initialisation --
     // Inititalise CR0
-    movq $0x80000001, %rax
-    movq %rax, %cr0
+    mov rax, 0x80000001
+    mov cr0, rax
     // Modify CR4 - enable PAE, PGE, OSFXSR
-    movq %cr4, %rax
-    andq $0xFFFFFFFFFE08D2A0, %rax
-    orq $0x2A0, %rax
-    // orq $0xAA0, %rax
-    // movq $0x402A0, %rax
-    movq %rax, %cr4
+    mov rax, cr4
+    and rax, 0xFFFFFFFFFE08D2A0
+    or rax, 0x2A0
+    mov cr4, rax
     // Modify EFER - enable NX and SYSCALL, disable Fast FXSAVE/FXRSTOR
-    movl $0xC0000080, %ecx
+    mov ecx, 0xC0000080
     rdmsr
-    orl $0x801, %eax
-    andl $0xFFFFBFFF, %eax
+    or eax, 0x801
+    and eax, 0xFFFFBFFF
     wrmsr
     // Initialise PAT
-    movl $0x277, %ecx
+    mov ecx, 0x277
     rdmsr
-    andl $0xF0F0F0F0, %eax
-    andl $0xF0F0F0F0, %edx
-    orl $0x00070406, %eax
-    orl $0x00070501, %edx
+    and eax, 0xF0F0F0F0
+    and edx, 0xF0F0F0F0
+    or eax, 0x00070406
+    or edx, 0x00070501
     wrmsr
 
     // -- Jump to relocated init code --
-    movq $0f, %rax
-    jmp *%rax
+    mov rax, offset relocated
+    jmp rax
 
-0:
-    // -- Switch to allocated kernel stack --
-    movq $0xFFFFFFFF20007FF0, %rsp
-    pushq $0
-    movq %rsp, %rbp
-    andq $-16, %rsp
-
+relocated:
     // -- Jump to kernel --
-    movq $kernel_main, %rax
-    callq *%rax
+    mov rax, offset kernel_main
+    call rax
 
 .size init64, . - init64
+
+// Revert back to default section, as this get inlined in Rust code
+.text
