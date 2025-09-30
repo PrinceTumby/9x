@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2022, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2025, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -358,6 +358,9 @@
 #elif defined(_AED_EFI) || defined(_GNU_EFI) || defined(_EDK2_EFI)
 #include "../../acpica/source/include/platform/acefi.h"
 
+#elif defined(__ZEPHYR__)
+#include "../../acpica/source/include/platform/aczephyr.h"
+
 #elif defined(__9x__)
 #include "ac9x.h"
 
@@ -398,6 +401,10 @@
 
 #ifndef ACPI_ACQUIRE_GLOBAL_LOCK
 #define ACPI_ACQUIRE_GLOBAL_LOCK(GLptr, Acquired) Acquired = 1
+#endif
+
+#ifndef ACPI_SEMAPHORE_NULL
+#define ACPI_SEMAPHORE_NULL NULL
 #endif
 
 #ifndef ACPI_RELEASE_GLOBAL_LOCK

@@ -8,7 +8,7 @@
  *
  * 1. Copyright Notice
  *
- * Some or all of this work - Copyright (c) 1999 - 2021, Intel Corp.
+ * Some or all of this work - Copyright (c) 1999 - 2025, Intel Corp.
  * All rights reserved.
  *
  * 2. License
@@ -179,8 +179,8 @@
 #define ACPI_FLUSH_CPU_CACHE()
 
 /* Based on FreeBSD's due to lack of documentation */
-extern int AcpiOsAcquireGlobalLock(uint32 *lock);
-extern int AcpiOsReleaseGlobalLock(uint32 *lock);
+extern int AcpiOsAcquireGlobalLock(volatile uint32 *lock);
+extern int AcpiOsReleaseGlobalLock(volatile uint32 *lock);
 
 #define ACPI_ACQUIRE_GLOBAL_LOCK(GLptr, Acq)    do {                \
         (Acq) = AcpiOsAcquireGlobalLock(&((GLptr)->GlobalLock));    \

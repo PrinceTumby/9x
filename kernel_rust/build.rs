@@ -15,50 +15,56 @@ fn main() {
         //     .unwrap()
         //     .success());
         for (source_file, object_file) in ACPICA_SOURCE_FILES.iter().zip(ACPICA_OBJECT_FILES) {
-            assert!(Command::new("clang")
-                // .arg("clang")
-                .arg("-Iinclude_override")
-                .arg("-Iacpica/source/include")
-                .arg("-U_LINUX")
-                .arg("-U__linux__")
-                .arg("-D__9x__")
-                .arg("-DB_9X_64_BIT")
-                .arg("-DDEBUG=0")
-                .arg("-fPIC")
-                .arg("-disable-red-zone")
-                .arg("-nostdlib")
-                .arg("-ffunction-sections")
-                .arg("-c")
-                .arg("-w")
-                .arg("-O2")
-                .arg("-Drelease-safe=true")
-                .args(&["-target", "x86_64-unknown-none-unknown"])
-                .arg(source_file)
-                .arg("-o")
-                .arg(&format!("{out_dir}\\{object_file}"))
-                .current_dir(Path::new("src/platform/acpi/acpica_9x/"))
+            assert!(
+                Command::new("clang")
+                    // .arg("clang")
+                    .arg("-Iinclude_override")
+                    .arg("-Iacpica/source/include")
+                    .arg("-U_LINUX")
+                    .arg("-U__linux__")
+                    .arg("-D__9x__")
+                    .arg("-DB_9X_64_BIT")
+                    .arg("-DDEBUG=0")
+                    .arg("-fPIC")
+                    .arg("-disable-red-zone")
+                    .arg("-nostdlib")
+                    .arg("-ffunction-sections")
+                    .arg("-c")
+                    .arg("-w")
+                    .arg("-O2")
+                    .arg("-Drelease-safe=true")
+                    .args(["-target", "x86_64-unknown-none-unknown"])
+                    .arg(source_file)
+                    .arg("-o")
+                    .arg(format!("{out_dir}\\{object_file}"))
+                    .current_dir(Path::new("src/platform/acpi/acpica_9x/"))
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        assert!(
+            Command::new("llvm-ar")
+                // .arg("llvm-ar")
+                .arg("--format=gnu")
+                .args(["crus", "libacpica.a"])
+                .args(ACPICA_OBJECT_FILES)
+                .current_dir(Path::new(&out_dir))
                 .status()
                 .unwrap()
-                .success());
-        }
-        assert!(Command::new("llvm-ar")
-            // .arg("llvm-ar")
-            .arg("--format=gnu")
-            .args(&["crus", "libacpica.a"])
-            .args(ACPICA_OBJECT_FILES)
-            .current_dir(Path::new(&out_dir))
-            .status()
-            .unwrap()
-            .success());
+                .success()
+        );
     } else {
-        assert!(Command::new("zig-0.10.0")
-            .arg("build")
-            .arg("-Drelease-safe=true")
-            .arg(&format!("-Dout-dir={out_dir}"))
-            .current_dir("src/platform/acpi/acpica_9x/")
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("zig-0.10.0")
+                .arg("build")
+                .arg("-Drelease-safe=true")
+                .arg(format!("-Dout-dir={out_dir}"))
+                .current_dir("src/platform/acpi/acpica_9x/")
+                .status()
+                .unwrap()
+                .success()
+        );
     }
 
     println!("cargo:rustc-link-search=native={}", out_dir);
@@ -193,6 +199,7 @@ static ACPICA_SOURCE_FILES: &[&str] = &[
     "acpica/source/components/utilities/utascii.c",
     "acpica/source/components/utilities/utbuffer.c",
     "acpica/source/components/utilities/utcache.c",
+    "acpica/source/components/utilities/utcksum.c",
     "acpica/source/components/utilities/utcopy.c",
     "acpica/source/components/utilities/utdebug.c",
     "acpica/source/components/utilities/utdecode.c",
@@ -358,6 +365,7 @@ static ACPICA_OBJECT_FILES: &[&str] = &[
     "utascii.o",
     "utbuffer.o",
     "utcache.o",
+    "utcksum.o",
     "utcopy.o",
     "utdebug.o",
     "utdecode.o",
