@@ -1,13 +1,12 @@
 //! Provides facilities for allocating physical memory.
 
 use crate::arch::kernel_args::MutSlice;
-use crate::arch::paging::{align_to_page, PageTable, PageTableEntry, PAGE_SIZE};
+use crate::arch::paging::{PAGE_SIZE, PageTable, PageTableEntry, align_to_page};
 use core::arch::asm;
+use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
-use core::marker::PhantomData;
 use spin::Mutex;
-use thiserror_no_std::Error;
 
 pub type RawPage = [u8; PAGE_SIZE];
 
@@ -16,13 +15,15 @@ static PAGE_ALLOCATOR: Mutex<Option<PageAllocatorInternal>> = Mutex::new(None);
 /// Initialises the page allocation system. Does nothing if the page allocation system is already
 /// initialised.
 pub unsafe fn init(page_table_address: usize, memory_bitmap: &'static mut [u8], num_pages: usize) {
-    let mut lock = PAGE_ALLOCATOR.lock();
-    if let None = lock.as_mut() {
-        lock.replace(PageAllocatorInternal::new(
-            page_table_address,
-            memory_bitmap,
-            num_pages,
-        ));
+    unsafe {
+        let mut lock = PAGE_ALLOCATOR.lock();
+        if lock.as_mut().is_none() {
+            lock.replace(PageAllocatorInternal::new(
+                page_table_address,
+                memory_bitmap,
+                num_pages,
+            ));
+        }
     }
 }
 
@@ -64,13 +65,14 @@ pub fn used_pages() -> usize {
     page_allocator.total_pages - page_allocator.free_pages
 }
 
-/// Attempts to reserve a free page. Returns the physical address if a page is found.
-pub fn find_and_reserve_page() -> Result<OwnedPhysicalPage, ()> {
+/// Attempts to reserve a free page.
+/// Returns the physical address if a page is found.
+pub fn find_and_reserve_page() -> Result<OwnedPhysicalPage, ReservePageError> {
     let mut lock = PAGE_ALLOCATOR.lock();
     let page_allocator = lock.as_mut().unwrap();
     page_allocator
         .find_and_reserve_page()
-        .map(|ptr| OwnedPhysicalPage::from_non_null(ptr))
+        .map(OwnedPhysicalPage::from_non_null)
 }
 
 /// Marks a page as no longer reserved.
@@ -83,9 +85,11 @@ pub fn free_page(address: usize) {
 
 /// Returns whether whether memory at the given virtual address is identity mapped.
 pub unsafe fn is_address_identity_mapped(address: usize) -> bool {
-    let mut lock = PAGE_ALLOCATOR.lock();
-    let page_allocator = lock.as_mut().unwrap();
-    page_allocator.is_address_identity_mapped(address)
+    unsafe {
+        let mut lock = PAGE_ALLOCATOR.lock();
+        let page_allocator = lock.as_mut().unwrap();
+        page_allocator.is_address_identity_mapped(address)
+    }
 }
 
 pub unsafe fn map_page_translation(
@@ -93,9 +97,11 @@ pub unsafe fn map_page_translation(
     virtual_address: usize,
     flags: PageTableEntry,
 ) -> Result<(), MapPageError> {
-    let mut lock = PAGE_ALLOCATOR.lock();
-    let page_allocator = lock.as_mut().unwrap();
-    page_allocator.map_page_translation(physical_address, virtual_address, flags)
+    unsafe {
+        let mut lock = PAGE_ALLOCATOR.lock();
+        let page_allocator = lock.as_mut().unwrap();
+        page_allocator.map_page_translation(physical_address, virtual_address, flags)
+    }
 }
 
 /// Allocates a page at the given virtual address (aligned down, top 16 bits ignored).
@@ -103,16 +109,20 @@ pub unsafe fn map_page_translation(
 /// Returns whether a page was allocated, if `false` then either reserving a page failed or a page
 /// was already found to be mapped at that address.
 pub unsafe fn map_page(virtual_address: usize, flags: PageTableEntry) -> Result<(), MapPageError> {
-    let mut lock = PAGE_ALLOCATOR.lock();
-    let page_allocator = lock.as_mut().unwrap();
-    page_allocator.map_page(virtual_address, flags)
+    unsafe {
+        let mut lock = PAGE_ALLOCATOR.lock();
+        let page_allocator = lock.as_mut().unwrap();
+        page_allocator.map_page(virtual_address, flags)
+    }
 }
 
 /// Unmaps and frees a page at `virtual_address` (aligned down, top 16 bits ignored).
 pub unsafe fn unmap_and_free_page(virtual_address: usize) {
-    let mut lock = PAGE_ALLOCATOR.lock();
-    let page_allocator = lock.as_mut().unwrap();
-    page_allocator.unmap_and_free_page(virtual_address);
+    unsafe {
+        let mut lock = PAGE_ALLOCATOR.lock();
+        let page_allocator = lock.as_mut().unwrap();
+        page_allocator.unmap_and_free_page(virtual_address);
+    }
 }
 
 // TODO Make this work for NX
@@ -126,9 +136,11 @@ pub fn check_flags(virtual_start_address: usize, size: usize, flags: PageTableEn
 
 /// Switches to the main kernel kernel address space.
 pub unsafe fn load_kernel_address_space() {
-    let mut lock = PAGE_ALLOCATOR.lock();
-    let page_allocator = lock.as_mut().unwrap();
-    page_allocator.load_address_space();
+    unsafe {
+        let mut lock = PAGE_ALLOCATOR.lock();
+        let page_allocator = lock.as_mut().unwrap();
+        page_allocator.load_address_space();
+    }
 }
 
 pub struct OwnedPhysicalPage {
@@ -139,9 +151,11 @@ pub struct OwnedPhysicalPage {
 impl OwnedPhysicalPage {
     #[must_use]
     pub unsafe fn from_raw(raw: *mut RawPage) -> Self {
-        Self {
-            pointer: NonNull::new_unchecked(raw),
-            _marker: PhantomData,
+        unsafe {
+            Self {
+                pointer: NonNull::new_unchecked(raw),
+                _marker: PhantomData,
+            }
         }
     }
 
@@ -185,7 +199,7 @@ impl DerefMut for OwnedPhysicalPage {
 
 impl AsRef<RawPage> for OwnedPhysicalPage {
     fn as_ref(&self) -> &RawPage {
-        &*self
+        self
     }
 }
 
@@ -198,7 +212,11 @@ impl AsMut<RawPage> for OwnedPhysicalPage {
 /// Marks a page as no longer reserved.
 /// The caller is expected to no longer use references to this page.
 
-#[derive(Error, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("page reservation error")]
+pub struct ReservePageError;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum MapPageError {
     #[error("out of pages")]
     OutOfPages,
@@ -244,11 +262,12 @@ impl PageAllocatorInternal {
 
     #[inline]
     pub fn num_pages_used(&self) -> usize {
-        return self.total_pages - self.free_pages;
+        self.total_pages - self.free_pages
     }
 
-    /// Attempts to reserve a free page. Returns the physical address if a page is found.
-    pub fn find_and_reserve_page(&mut self) -> Result<NonNull<RawPage>, ()> {
+    /// Attempts to reserve a free page.
+    /// Returns the physical address if a page is found.
+    pub fn find_and_reserve_page(&mut self) -> Result<NonNull<RawPage>, ReservePageError> {
         for (byte_index, byte) in self.memory_bitmap.iter_mut().enumerate() {
             if *byte != 0xFF {
                 let bit_index = (!*byte).leading_zeros() as usize;
@@ -263,7 +282,7 @@ impl PageAllocatorInternal {
                 return Ok(NonNull::new(page_ptr).unwrap());
             }
         }
-        Err(())
+        Err(ReservePageError)
     }
 
     /// Marks a page as no longer reserved.
@@ -309,43 +328,42 @@ impl PageAllocatorInternal {
         virtual_address: usize,
         flags: PageTableEntry,
     ) -> Result<(), MapPageError> {
-        let physical_address = physical_address & 0x000FFFFFFFFFF000;
-        let mut current_address = self.page_table.address();
-        for (i, level_mask) in Self::LEVEL_MASKS.iter().enumerate() {
-            let current_table = current_address as *mut PageTable;
-            let index = ((*level_mask & virtual_address) >> ((3 - i) * 9 + 12)) % 512;
-            let entry = unsafe { &mut (&mut *current_table)[index] };
-            // Allocate page if required
-            match (i, entry.present()) {
-                // Child page already exists, return failure
-                (3, true) => return Err(MapPageError::PageAlreadyExists),
-                // Child page doesn't exist, map page with flags
-                (3, false) => {
-                    *entry = flags.replace_addr_with(physical_address);
-                    // unsafe {
-                    //     asm!("invlpg [{}]", in(reg) new_page_address, options(nostack));
-                    // }
-                    return Ok(());
+        unsafe {
+            let physical_address = physical_address & 0x000FFFFFFFFFF000;
+            let mut current_address = self.page_table.address();
+            for (i, level_mask) in Self::LEVEL_MASKS.iter().enumerate() {
+                let current_table = current_address as *mut PageTable;
+                let index = ((*level_mask & virtual_address) >> ((3 - i) * 9 + 12)) % 512;
+                let entry = &mut (&mut *current_table)[index];
+                // Allocate page if required
+                match (i, entry.present()) {
+                    // Child page already exists, return failure
+                    (3, true) => return Err(MapPageError::PageAlreadyExists),
+                    // Child page doesn't exist, map page with flags
+                    (3, false) => {
+                        *entry = flags.replace_addr_with(physical_address);
+                        // asm!("invlpg [{}]", in(reg) new_page_address, options(nostack));
+                        return Ok(());
+                    }
+                    // Parent entry doesn't exist, allocate
+                    (_, false) => {
+                        let Ok(mut new_page_table) = self.find_and_reserve_page() else {
+                            return Err(MapPageError::OutOfPages);
+                        };
+                        // Zero out page table
+                        new_page_table.as_mut().fill(0);
+                        // Set entry to new page table
+                        let new_page_table_addr =
+                            new_page_table.as_ptr() as usize & 0x000FFFFFFFFFF000;
+                        *entry = PageTableEntry::READ_WRITE.replace_addr_with(new_page_table_addr);
+                        // asm!("invlpg [{}]", in(reg) new_page_table_addr, options(nostack));
+                    }
+                    (_, true) => {}
                 }
-                // Parent entry doesn't exist, allocate
-                (_, false) => {
-                    let Ok(mut new_page_table) = self.find_and_reserve_page() else {
-                        return Err(MapPageError::OutOfPages);
-                    };
-                    // Zero out page table
-                    new_page_table.as_mut().fill(0);
-                    // Set entry to new page table
-                    let new_page_table_addr = new_page_table.as_ptr() as usize & 0x000FFFFFFFFFF000;
-                    *entry = PageTableEntry::READ_WRITE.replace_addr_with(new_page_table_addr);
-                    // unsafe {
-                    //     asm!("invlpg [{}]", in(reg) new_page_table_addr, options(nostack));
-                    // }
-                }
-                (_, true) => {}
+                current_address = entry.address();
             }
-            current_address = entry.address();
+            unreachable!()
         }
-        unreachable!()
     }
 
     /// Allocates a page at the given virtual address (aligned down, top 16 bits ignored).
@@ -357,16 +375,18 @@ impl PageAllocatorInternal {
         virtual_address: usize,
         flags: PageTableEntry,
     ) -> Result<(), MapPageError> {
-        let Ok(new_page) = self.find_and_reserve_page() else {
-            return Err(MapPageError::OutOfPages);
-        };
-        let new_page_address = new_page.as_ptr() as usize;
-        if let Err(err) = self.map_page_translation(new_page_address, virtual_address, flags) {
-            // Free reserved page if unsuccessful
-            self.free_page(new_page_address);
-            return Err(err);
+        unsafe {
+            let Ok(new_page) = self.find_and_reserve_page() else {
+                return Err(MapPageError::OutOfPages);
+            };
+            let new_page_address = new_page.as_ptr() as usize;
+            if let Err(err) = self.map_page_translation(new_page_address, virtual_address, flags) {
+                // Free reserved page if unsuccessful
+                self.free_page(new_page_address);
+                return Err(err);
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// Unmaps and frees a page at `virtual_address` (aligned down, top 16 bits ignored).
@@ -391,7 +411,6 @@ impl PageAllocatorInternal {
         }
     }
 
-    // TODO Make this work for NX
     /// Checks if all of the enabled flags exist on the mapped pages.
     /// Returns `false` if some pages do not have the enabled flags or are not mapped.
     pub fn check_flags(
@@ -400,6 +419,7 @@ impl PageAllocatorInternal {
         size: usize,
         flags: PageTableEntry,
     ) -> bool {
+        // TODO: Make this work for NX.
         let actual_flags = flags.replace_addr_with(0).0;
         let num_pages = {
             let lower_bound = align_to_page(virtual_start_address);
@@ -425,6 +445,6 @@ impl PageAllocatorInternal {
 
     /// Switches to the page allocator's page table.
     pub unsafe fn load_address_space(&self) {
-        asm!("mov cr3, {}", in(reg) self.page_table.0, options(nostack))
+        unsafe { asm!("mov cr3, {}", in(reg) self.page_table.0, options(nostack)) }
     }
 }

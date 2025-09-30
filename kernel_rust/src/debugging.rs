@@ -58,7 +58,7 @@ impl Iterator for StackFrameIterator {
         if self.frame_address == self.last_frame_address {
             return None;
         }
-        if self.frame_address == 0 || self.frame_address % align_of::<usize>() != 0 {
+        if self.frame_address == 0 || !self.frame_address.is_multiple_of(align_of::<usize>()) {
             return None;
         }
         let frame_pointer = self.frame_address as *const usize;

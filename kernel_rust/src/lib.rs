@@ -1,17 +1,22 @@
+#![warn(clippy::all)]
+#![allow(clippy::missing_safety_doc)]
+
 #![no_std]
 #![no_main]
-#![warn(clippy::all)]
-// Needed for `next_multiple_of`, used for aligning addresses upward
-#![feature(int_roundings)]
-// Used in in `x86_64`
+
+// Used in in `x86_64`.
 #![feature(abi_x86_interrupt)]
-// Used for giving a custom panic message on allocation errors
+// Used for giving a custom panic message on allocation errors.
 #![feature(alloc_error_handler)]
 // Used in various places for `Box::try_new`, `Vec::try_new`, etc as well as
-// `physical_block_allocator`
+// `physical_block_allocator`.
 #![feature(allocator_api)]
-// Used in ACPI for defining implementations of `AcpiOsPrintf` and `AcpiOsVprintf`
+// Used as a substitute for `cfg_if` in various places.
+#![feature(cfg_select)]
+// Used in ACPI for defining implementations of `AcpiOsPrintf` and `AcpiOsVprintf`.
 #![feature(c_variadic)]
+// Used in various places, including the process Virtual Memory Allocator.
+#![feature(offset_of_enum)]
 
 pub mod arch;
 pub mod core_graphics;
@@ -29,7 +34,7 @@ extern crate alloc;
 
 use log::{debug, warn};
 
-extern "C" {
+unsafe extern "C" {
     static HEAP_BASE: usize;
     static HEAP_END: usize;
     static LOCAL_APIC_BASE: usize;
@@ -37,7 +42,7 @@ extern "C" {
 
 const FONT_PATH: &str = "etc/kernel/standard_font.psf";
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(args: &arch::kernel_args::Args) -> ! {
     // Set up logging
     unsafe {
@@ -147,6 +152,7 @@ pub extern "C" fn kernel_main(args: &arch::kernel_args::Args) -> ! {
         arch::init_stage_2(args);
     }
     debug!("Finished, entering infinite loop!");
+    #[allow(clippy::empty_loop)]
     loop {}
 }
 

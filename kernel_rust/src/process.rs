@@ -6,7 +6,6 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 use spin::Mutex;
 
-/// Pending processes, implemented as a doubly linked list
 pub mod process_list {
     use super::{Mutex, NonNull, PageBox, PhantomData, PhysicalBlockAllocator, Process};
 
@@ -30,7 +29,7 @@ pub mod process_list {
         unsafe {
             debug_assert_eq!(process.next, None);
             let mut list = PENDING_PROCESSES.lock();
-            let process_ptr = NonNull::new_unchecked(PageBox::into_raw(process));
+            let process_ptr = NonNull::new_unchecked(PageBox::into_raw_with_allocator(process).0);
             if let Some(tail) = list.tail.as_mut().map(|ptr| ptr.as_mut()) {
                 debug_assert_eq!(tail.next, None);
                 tail.next = Some(process_ptr);

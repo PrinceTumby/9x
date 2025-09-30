@@ -4,23 +4,25 @@ use crate::LOCAL_APIC_BASE;
 use core::arch::asm;
 
 pub mod local {
-    use super::{asm, page_allocation, PageTableEntry, LOCAL_APIC_BASE};
+    use super::{LOCAL_APIC_BASE, PageTableEntry, asm, page_allocation};
 
     #[repr(transparent)]
     pub struct LocalApic(usize);
 
     impl LocalApic {
         pub unsafe fn new(base_address: usize) -> Self {
-            let higher_half_address = &LOCAL_APIC_BASE as *const usize as usize;
-            // Map Local APIC in higher half so it can be accessed when we swap out the lower half
-            // of the address space for processes
-            page_allocation::map_page_translation(
-                base_address,
-                higher_half_address,
-                PageTableEntry::READ_WRITE,
-            )
-            .expect("out of memory when mapping Local APIC page");
-            Self(higher_half_address)
+            unsafe {
+                let higher_half_address = &LOCAL_APIC_BASE as *const usize as usize;
+                // Map Local APIC in higher half so it can be accessed when we swap out the lower half
+                // of the address space for processes
+                page_allocation::map_page_translation(
+                    base_address,
+                    higher_half_address,
+                    PageTableEntry::READ_WRITE,
+                )
+                .expect("out of memory when mapping Local APIC page");
+                Self(higher_half_address)
+            }
         }
 
         pub fn enable_bsp_local_apic(&mut self) {
@@ -188,7 +190,7 @@ pub mod local {
 }
 
 pub mod io {
-    use super::{page_allocation, PageTableEntry};
+    use super::{PageTableEntry, page_allocation};
 
     pub struct IoApic {
         base_address: usize,
@@ -199,26 +201,28 @@ pub mod io {
 
     impl IoApic {
         pub unsafe fn new(base_address: usize, id: u8, global_system_interrupt_base: u32) -> Self {
-            if !page_allocation::is_address_identity_mapped(base_address) {
-                page_allocation::map_page_translation(
+            unsafe {
+                if !page_allocation::is_address_identity_mapped(base_address) {
+                    page_allocation::map_page_translation(
+                        base_address,
+                        base_address,
+                        PageTableEntry::READ_WRITE,
+                    )
+                    .expect("out of memory when mapping IO APIC page");
+                }
+                let mut io_apic = Self {
                     base_address,
-                    base_address,
-                    PageTableEntry::READ_WRITE,
-                )
-                .expect("out of memory when mapping IO APIC page");
+                    _id: id,
+                    global_system_interrupt_base,
+                    num_redirection_entries: 0,
+                };
+                let num_redirection_entries =
+                    io_apic.read_register(IoApicRegister::NumRedirectionEntries) as u16;
+                assert!(num_redirection_entries < 0x3F);
+                log::debug!("I/O APIC {id} has {num_redirection_entries} redirection entries");
+                io_apic.num_redirection_entries = num_redirection_entries;
+                io_apic
             }
-            let mut io_apic = Self {
-                base_address,
-                _id: id,
-                global_system_interrupt_base,
-                num_redirection_entries: 0,
-            };
-            let num_redirection_entries =
-                io_apic.read_register(IoApicRegister::NumRedirectionEntries) as u16;
-            assert!(num_redirection_entries < 0x3F);
-            log::debug!("I/O APIC {id} has {num_redirection_entries} redirection entries");
-            io_apic.num_redirection_entries = num_redirection_entries;
-            io_apic
         }
 
         #[inline]

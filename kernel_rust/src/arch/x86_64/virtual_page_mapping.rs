@@ -1,5 +1,5 @@
-use super::page_allocation::{self, OwnedPhysicalPage};
-use super::paging::{align_to_page, PageTable, PageTableEntry};
+use super::page_allocation::{self, OwnedPhysicalPage, ReservePageError};
+use super::paging::{PageTable, PageTableEntry, align_to_page};
 use core::mem::transmute;
 
 pub struct VirtualPageMapper {
@@ -14,7 +14,7 @@ impl VirtualPageMapper {
         0x0000_001F_F000,
     ];
 
-    pub fn new() -> Result<Self, ()> {
+    pub fn new() -> Result<Self, ReservePageError> {
         // Create new PML4
         let mut pml4 = page_allocation::find_and_reserve_page()?;
         let pml4_table = unsafe { transmute::<&mut [u8; 4096], &mut PageTable>(&mut pml4) };
@@ -36,7 +36,7 @@ impl VirtualPageMapper {
         virtual_start_address: usize,
         size: usize,
         buffer: &[u8],
-    ) -> Result<(), ()> {
+    ) -> Result<(), ReservePageError> {
         const PARENT_FLAGS: PageTableEntry = PageTableEntry::READ_WRITE_EXECUTE;
         const CHILD_FLAGS: PageTableEntry = PageTableEntry::READ;
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
@@ -92,9 +92,9 @@ impl VirtualPageMapper {
         Ok(())
     }
 
-    // TODO Cleanup parent page table pages, keep number of used pages somewhere in page table?
     /// Unmaps and frees `(size / 4096) + 1` pages starting at the given linear address.
     pub fn unmap_mem(&mut self, start_address: usize, size: usize) {
+        // TODO: Cleanup parent page table pages, keep number of used pages somewhere in page table?
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
         let actual_start_address = start_address & 0x000FFFFFFFFFF000;
         let num_pages = {
@@ -125,10 +125,10 @@ impl VirtualPageMapper {
         }
     }
 
-    // TODO Optimize by keeping count of number of pages done, stay at deepest level
     /// Sets the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Relaxes permissions for parent pages where necessary.
     pub fn change_flags(&mut self, start_address: usize, size: usize, flags: PageTableEntry) {
+        // TODO: Optimize by keeping count of number of pages done, stay at deepest level.
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
         let actual_start_address = start_address & 0x000FFFFFFFFFF000;
         let actual_flags = (flags.0 & 0x80000000000001FE) | 1;
@@ -158,7 +158,6 @@ impl VirtualPageMapper {
         }
     }
 
-    // TODO Optimize by keeping count of number of pages done, stay at deepest level
     /// Relaxes the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Also relaxes permissions for parent pages where necessary.
     pub fn change_flags_relaxing(
@@ -167,6 +166,7 @@ impl VirtualPageMapper {
         size: usize,
         flags: PageTableEntry,
     ) {
+        // TODO: Optimize by keeping count of number of pages done, stay at deepest level.
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
         let actual_start_address = start_address & 0x000FFFFFFFFFF000;
         let relaxation_flags = (flags.0 & 0x6) | 1;
@@ -202,23 +202,25 @@ impl VirtualPageMapper {
         }
     }
 
-    unsafe fn free_page_tree(&mut self, node: PageTableEntry, level: usize) {
-        if !node.present() {
-            return;
-        }
-        // TODO Add huge page support
-        if node.huge_page() {
-            todo!()
-        }
-        if level < 3 {
-            let page_table = &mut *(node.address() as *mut PageTable);
-            for entry in page_table {
-                if entry.present() {
-                    self.free_page_tree(*entry, level + 1);
+    unsafe fn free_page_tree(node: PageTableEntry, level: usize) {
+        unsafe {
+            if !node.present() {
+                return;
+            }
+            // TODO: Add huge page support.
+            if node.huge_page() {
+                todo!("huge page support")
+            }
+            if level < 3 {
+                let page_table = &mut *(node.address() as *mut PageTable);
+                for entry in page_table {
+                    if entry.present() {
+                        Self::free_page_tree(*entry, level + 1);
+                    }
                 }
             }
+            page_allocation::free_page(node.address());
         }
-        page_allocation::free_page(node.address());
     }
 }
 
@@ -228,7 +230,7 @@ impl Drop for VirtualPageMapper {
             let node = transmute::<&[u8; 4096], &PageTable>(&self.pml4);
             for entry in &node[0..256] {
                 if entry.present() {
-                    self.free_page_tree(*entry, 0);
+                    Self::free_page_tree(*entry, 0);
                 }
             }
         }

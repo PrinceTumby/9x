@@ -1,13 +1,12 @@
 use crate::arch;
-use crate::arch::paging::{PageTableData, PAGE_SIZE};
-use crate::arch::user_page_mapping::{UnmapMemTask, UserPageMapper};
+use crate::arch::paging::PAGE_SIZE;
+use crate::arch::user_page_mapping::{UnmapMemTask, MapMemTask, UserPageMapper, MapMemError};
 use crate::physical_block_allocator::{PageBox, PhysicalBlockAllocator};
 use core::alloc::AllocError;
-use core::cmp::Ordering;
-use core::mem::size_of;
+use core::mem::{size_of, offset_of};
 use core::ptr::NonNull;
 use core::task::Poll;
-use memoffset::offset_of;
+use spin::Mutex;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Segment {
@@ -20,604 +19,278 @@ pub struct Segment {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegmentFlags {
-    read: bool,
-    write: bool,
-    execute: bool,
+    pub read: bool,
+    pub write: bool,
+    pub execute: bool,
 }
 
-impl From<SegmentFlags> for usize {
-    fn from(flags: SegmentFlags) -> Self {
-        flags.read as usize | (flags.write as usize) << 1 | (flags.execute as usize) << 2
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VMAAllocationError {
-    OutOfPagesLeft,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum VMAMapError {
+    #[error("a segment already exists in the requested mapping area")]
+    SegmentAlreadyExists,
+    #[error("out of memory")]
     OutOfMemory,
+    #[error("out of address space")]
     OutOfAddressSpace,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum VMAUnmapError {
+    #[error("the segment is already unmapped")]
+    SegmentAlreadyUnmapped,
+    #[error("the segment is currently locked")]
+    SegmentLocked,
 }
 
 pub struct VMAAllocator {
     page_mapper: UserPageMapper,
-    node_storage: NodeStorageList,
-    tree: VMATree,
+    tree: Mutex<VMATree>,
 }
-
-// TODO: Change pretty much all of this:
-// 1. Remove force_map_at, it just isn't needed and complicates the kernel a lot. This then allows
-//    for rewriting the state machine to be just scanning and mapping. Also makes things much
-//    easier to make atomic whenever multithreaded gets implemented.
-// 2. Remove any logic that automatically recombines segments (not sure if there is any).
-// 3. Change syscalls that send pages/shipments/whatever to instead send a single segment.
-// 4. Add functions for manually unmapping, truncating, extending, splitting, and recombining
-//    segments.
 
 impl VMAAllocator {
-    pub fn new(page_mapper: UserPageMapper) -> Result<Self, AllocError> {
+    pub fn new(page_mapper: UserPageMapper, pages_used: &mut usize) -> Result<Self, AllocError> {
         Ok(Self {
             page_mapper,
-            node_storage: NodeStorageList::new()?,
-            tree: VMATree::new(),
+            tree: Mutex::new(VMATree::new(pages_used)?),
         })
     }
 
-    /// Panics if the start and length of `new_segment` are not page aligned, or if the end address
-    /// is not less than or equal to `arch::process::HIGHEST_USER_ADDRESS`.
-    pub fn start_force_map_at(
+    /// Unmaps the segment containing `segment_address`.
+    /// Returns `VMAUnmapError::SegmentAlreadyUnmapped` if `segment_address` does not belong to a
+    /// segment, or `VMAUnmapError::SegmentLocked` if the segment is currently locked for mapping
+    /// or unmapping by another task.
+    pub fn start_unmap(&self, segment_address: usize) -> Result<UnmapTask, VMAUnmapError> {
+        unsafe {
+            let tree = self.tree.lock();
+            let LeafInfo {
+                leaf,
+                parent_and_side: _,
+                start,
+                end,
+            } = tree.get_leaf_containing(segment_address);
+            let leaf = leaf.unwrap_leaf();
+            match &mut *leaf.raw() {
+                LeafNode::Empty { .. } => Err(VMAUnmapError::SegmentAlreadyUnmapped),
+                LeafNode::Used { flags } => {
+                    if flags.locked() {
+                        return Err(VMAUnmapError::SegmentLocked);
+                    }
+                    flags.set_locked(true);
+                    Ok(UnmapTask {
+                        start_address: start,
+                        unmap_mem_task: UnmapMemTask::new(start, (end + 1 - start) / PAGE_SIZE),
+                    })
+                }
+            }
+        }
+    }
+
+    /// # Safety
+    ///
+    /// The start and length of `new_segment` must be page aligned, and the end address must be
+    /// less than or equal to `arch::process::HIGHEST_USER_ADDRESS`.
+    pub unsafe fn start_try_map_at(
         &mut self,
+        pages_used: &mut usize,
         new_segment: Segment,
-        pages_left: &mut Option<&mut u64>,
-    ) -> Result<MapTask, AllocError> {
-        debug_assert_eq!(new_segment.start % arch::paging::PAGE_SIZE, 0);
-        debug_assert_eq!(new_segment.len % arch::paging::PAGE_SIZE, 0);
-        let new_segment_end = new_segment.start + new_segment.len - 1;
-        debug_assert!(new_segment_end <= arch::process::HIGHEST_USER_ADDRESS);
-        // 1. Get information about segment start.
-        // 2. If we're in a gap large enough to map the segment, just create a task starting at
-        //    PageMapping.
-        // 3. If we're in a gap, but not one large enough to map the segment, grab the next node
-        //    and create a MappingRemoval task with the pointer to the mapping and the new memory
-        //    unmapping task.
-        // 4. If we're in a segment, do the same as above just using the mapping we're already
-        //    inside.
-        let current_mapping = match self.tree.get_area_info(new_segment.start) {
-            AddressInfo::Space {
-                start,
-                length,
-                // left_node: _,
-                right_node,
-            } => {
-                let space_end = start + length - 1;
-                match space_end >= new_segment_end {
-                    true => {
-                        return Ok(MapTask {
-                            state: MapState::PageMapping {
-                                current_address: new_segment.start,
-                            },
-                            new_segment,
-                        })
-                    }
-                    false => match right_node {
-                        Some(mut node_ptr) => unsafe { node_ptr.as_mut() },
-                        None => return Err(AllocError),
-                    },
-                }
-            }
-            AddressInfo::Segment(mut node_ptr) => unsafe { node_ptr.as_mut() },
-        };
-        let next_mapping = current_mapping.next();
-        let current_mapping_end = current_mapping.start() + current_mapping.len;
-        let new_segment_end = new_segment.start + new_segment.len;
-        let new_vs_old_start = usize::cmp(&new_segment.start, &current_mapping.start());
-        let new_vs_old_end = usize::cmp(&new_segment_end, &current_mapping_end);
-        let (unmap_start, unmap_num_pages) = match (new_vs_old_start, new_vs_old_end) {
-            //    |     old mapping     |
-            // <--|     new mapping     |-->
-            (Ordering::Less | Ordering::Equal, Ordering::Equal | Ordering::Greater) => {
-                let unmap_start = current_mapping.start();
-                let unmap_num_pages = current_mapping.len / arch::paging::PAGE_SIZE;
-                self.tree.delete(current_mapping);
-                (unmap_start, unmap_num_pages)
-            }
-            // |     old mapping     |
-            //   |    new mapping    |-->
-            (Ordering::Greater, Ordering::Equal | Ordering::Greater) => {
-                let unmap_num_pages =
-                    (current_mapping_end - new_segment.start) / arch::paging::PAGE_SIZE;
-                current_mapping.len = new_segment.start - current_mapping.start();
-                (new_segment.start, unmap_num_pages)
-            }
-            //    |     old mapping     |
-            // <--|    new mapping    |
-            (Ordering::Less | Ordering::Equal, Ordering::Less) => {
-                let unmap_start = current_mapping.start();
-                let unmap_num_pages = (new_segment_end - unmap_start) / arch::paging::PAGE_SIZE;
-                current_mapping.len = current_mapping_end - new_segment_end;
-                current_mapping.set_start(new_segment_end);
-                (unmap_start, unmap_num_pages)
-            }
-            // |     old mapping     |
-            //   |   new mapping   |
-            (Ordering::Greater, Ordering::Less) => unsafe {
-                // Split current mapping into two mappings, before and after new mapping
-                current_mapping.len = new_segment.start - current_mapping.start();
-                // TODO Create a NodeBox type, because this shouldn't have to be unsafe
-                let new_split_node = self
-                    .node_storage
-                    .find_and_reserve_node(pages_left)
-                    .expect("out of memory when reserving VMA node")
-                    .as_mut();
-                new_split_node.set_start(new_segment_end);
-                new_split_node.len = current_mapping_end - new_segment_end;
-                new_split_node.flags = current_mapping.flags;
-                self.tree.insert(new_split_node);
-                (new_segment.start, new_segment.len / arch::paging::PAGE_SIZE)
-            },
-        };
-        Ok(MapTask {
-            state: MapState::MappingRemoval {
-                current_unmap_task: UnmapMemTask::new(unmap_start, unmap_num_pages),
-                next_mapping,
-            },
-            new_segment,
-        })
-    }
-
-    /// Panics if the start and length of `new_segment` are not page aligned, or if the end address
-    /// is not less than or equal to `arch::process::HIGHEST_USER_ADDRESS`.
-    pub fn start_try_map_at(&mut self, new_segment: Segment) -> Result<MapTask, AllocError> {
-        debug_assert_eq!(new_segment.start % arch::paging::PAGE_SIZE, 0);
-        debug_assert_eq!(new_segment.len % arch::paging::PAGE_SIZE, 0);
-        let new_segment_end = new_segment.start + new_segment.len - 1;
-        debug_assert!(new_segment_end <= arch::process::HIGHEST_USER_ADDRESS);
-        match self.tree.get_area_info(new_segment.start) {
-            AddressInfo::Space {
-                start,
-                length,
-                // left_node: _,
-                right_node: _,
-            } => {
-                let space_end = start + length - 1;
-                match space_end >= new_segment_end {
-                    true => Ok(MapTask {
-                        state: MapState::PageMapping {
-                            current_address: new_segment.start,
-                        },
-                        new_segment,
-                    }),
-                    false => Err(AllocError),
-                }
-            }
-            AddressInfo::Segment(_) => Err(AllocError),
-        }
-    }
-
-    /// The start of `new_segment` is intepreted as a hint of where to put the mapping.
-    /// Panics if the start and length of `new_segment` are not page aligned, or if the end address
-    /// is not less than or equal to `arch::process::HIGHEST_USER_ADDRESS`.
-    pub fn start_find_map(&mut self, new_segment: Segment) -> Result<MapTask, AllocError> {
-        // 1. Get information about segment start.
-        // 2. If we're in a gap large enough to map the segment, just create a task starting at
-        //    PageMapping.
-        // 3. If we're in a gap, but not one large enough to map the segment, just create a search
-        //    task starting at `right_node`.1
-        // 4. If we're in a segment, do the same as above just using the mapping we're already
-        //    inside.
-        debug_assert_eq!(new_segment.start % arch::paging::PAGE_SIZE, 0);
-        debug_assert_eq!(new_segment.len % arch::paging::PAGE_SIZE, 0);
-        let new_segment_end = new_segment.start + new_segment.len - 1;
-        debug_assert!(new_segment_end <= arch::process::HIGHEST_USER_ADDRESS);
-        Ok(match self.tree.get_area_info(new_segment.start) {
-            AddressInfo::Space {
-                start,
-                length,
-                // left_node: _,
-                right_node,
-            } => {
-                let space_end = start + length - 1;
-                match space_end >= new_segment_end {
-                    true => MapTask {
-                        state: MapState::PageMapping {
-                            current_address: new_segment.start,
-                        },
-                        new_segment,
-                    },
-                    false => MapTask {
-                        state: MapState::GapSearch {
-                            current_mapping: match right_node {
-                                Some(ptr) => ptr,
-                                None => return Err(AllocError),
-                            },
-                        },
-                        new_segment,
-                    },
-                }
-            }
-            AddressInfo::Segment(node_ptr) => MapTask {
-                state: MapState::GapSearch {
-                    current_mapping: node_ptr,
-                },
-                new_segment,
-            },
-        })
-    }
-}
-
-// TODO Implement VMAAllocator functions [force_map_at (map at addr, replace overlapping mappings),
-// try_map_at (check memory range, fail if overlapping), map_arbitrary (pick random addresses N
-// times until either a space is found, or we give up and pick the nearest gap)]. All functions
-// are tasks, as mapping memory can take an arbitrary length of time.
-// ADDENDUM: map_arbitrary shouldn't pick random addresses, just take an address suggestion from
-// userspace (they can pick random addresses) and do gap search if that fails.
-// TODO Copy code to testing crate for Miri
-// TODO Consider linking nodes together? Combination of Red-Black Tree and Linked List.
-
-enum AddressInfo {
-    Segment(NonNull<Node>),
-    Space {
-        start: usize,
-        length: usize,
-        // left_node: Option<NonNull<Node>>,
-        right_node: Option<NonNull<Node>>,
-    },
-}
-
-#[derive(Default)]
-struct VMATree {
-    root: Option<NonNull<Node>>,
-}
-
-impl VMATree {
-    pub const fn new() -> Self {
-        Self { root: None }
-    }
-
-    /// Gets information about either the mapping or the gap containing the address.
-    pub fn get_area_info(&self, address: usize) -> AddressInfo {
+    ) -> Result<MapTask, VMAMapError> {
         unsafe {
-            let Some(mut current_node_ptr) = self.root else {
-                return AddressInfo::Space {
-                    start: 0,
-                    length: arch::process::HIGHEST_USER_ADDRESS,
-                    // left_node: None,
-                    right_node: None,
-                };
-            };
-            let (gap_left_node, gap_right_node) = 'gap: loop {
-                let current_node = current_node_ptr.as_mut();
-                if current_node.start() > address {
-                    // current_node is to the right of address
-                    current_node_ptr = match current_node.children[Side::Left] {
-                        Some(left_child) => left_child,
-                        None => {
-                            let gap_left_node = current_node.previous();
-                            break 'gap (gap_left_node, Some(current_node_ptr));
-                        }
-                    }
-                } else {
-                    if current_node.start() + current_node.len > address {
-                        // current_node contains address
-                        return AddressInfo::Segment(current_node_ptr);
-                    } else {
-                        // current_node is to the left of address
-                        current_node_ptr = match current_node.children[Side::Right] {
-                            Some(right_child) => right_child,
-                            None => {
-                                let gap_right_node = current_node.next();
-                                break 'gap (Some(current_node_ptr), gap_right_node);
-                            }
-                        }
-                    }
+            debug_assert_eq!(new_segment.start % PAGE_SIZE, 0);
+            debug_assert_eq!(new_segment.len % PAGE_SIZE, 0);
+            let mut tree = self.tree.lock();
+            let new_segment_end = new_segment.start + new_segment.len - 1;
+            debug_assert!(new_segment_end <= arch::process::HIGHEST_USER_ADDRESS);
+            let LeafInfo { leaf, end, .. } = tree.get_leaf_containing(new_segment.start);
+            if end < new_segment_end {
+                return Err(VMAMapError::SegmentAlreadyExists);
+            }
+            let leaf = leaf.unwrap_leaf();
+            match leaf.read() {
+                LeafNode::Empty { .. } => {
+                    let new_leaf = tree.insert(
+                        pages_used,
+                        new_segment.start,
+                        new_segment.len,
+                        new_segment.flags.into(),
+                    )?
+                    .unwrap_leaf();
+                    let flags_ptr = new_leaf.unwrap_used_flags_ptr();
+                    (*flags_ptr.as_ptr()).set_locked(true);
+                    Ok(MapTask {
+                        map_mem_task: MapMemTask::new(
+                            new_segment.start,
+                            new_segment.len / PAGE_SIZE,
+                            new_segment.flags,
+                        ),
+                    })
                 }
-            };
-            let gap_start = gap_left_node.map_or(0, |ptr| {
-                let node = ptr.as_ref();
-                node.start() + node.len
-            });
-            let gap_length = gap_right_node
-                .map_or(arch::process::HIGHEST_USER_ADDRESS - gap_start, |ptr| {
-                    ptr.as_ref().start() - 1
-                });
-            AddressInfo::Space {
-                start: gap_start,
-                length: gap_length,
-                // left_node: gap_left_node,
-                right_node: gap_right_node,
+                LeafNode::Used { .. } => Err(VMAMapError::SegmentAlreadyExists),
             }
         }
     }
 
-    pub fn insert(&mut self, node: &mut Node) {
-        unsafe {
-            let Some(mut root) = self.root else {
-                node.set_color(NodeColor::Black);
-                self.root = Some(NonNull::from(node));
-                return;
-            };
-            let mut current_node = root.as_mut();
-            loop {
-                if current_node.start() > node.start() {
-                    current_node = match current_node.children[Side::Left] {
-                        Some(mut left_child) => left_child.as_mut(),
-                        None => {
-                            self.insert_under(node, current_node, Side::Left);
-                            return;
-                        }
-                    };
-                } else if current_node.start() < node.start() {
-                    current_node = match current_node.children[Side::Right] {
-                        Some(mut left_child) => left_child.as_mut(),
-                        None => {
-                            self.insert_under(node, current_node, Side::Right);
-                            return;
-                        }
-                    };
-                } else {
-                    unreachable!();
-                }
-            }
-        }
-    }
-
-    pub fn delete(&mut self, node: &mut Node) {
-        unsafe {
-            if self.root == Some(NonNull::new_unchecked(node as *mut Node))
-                && node.children == [None; 2]
-            {
-                self.root = None;
-                Node::deinit(node);
-                return;
-            }
-            if let [Some(_), Some(mut right_child)] = node.children {
-                // Swap tree position with right minimal node
-                Node::swap_positions(node, right_child.as_mut().minimum().as_mut());
-            }
-            // Node now has at most 1 child
-            if node.color() == NodeColor::Red {
-                // Node cannot have any children, remove
-                node.parent.unwrap().as_mut().children[node.which_child_of_parent()] = None;
-                node.parent = None;
-            } else {
-                // Node is black
-                if let Some(left_child) = node.children[0].map(|mut ptr| ptr.as_mut()) {
-                    left_child.set_color(NodeColor::Black);
-                    left_child.parent = node.parent;
-                    node.parent.unwrap().as_mut().children[node.which_child_of_parent()] =
-                        Some(NonNull::from(left_child));
-                } else if let Some(right_child) = node.children[1].map(|mut ptr| ptr.as_mut()) {
-                    right_child.set_color(NodeColor::Black);
-                    right_child.parent = node.parent;
-                    node.parent.unwrap().as_mut().children[node.which_child_of_parent()] =
-                        Some(NonNull::from(right_child));
-                } else {
-                    // Node has no children
-                    self.delete_black_non_root_leaf(node);
-                }
-            }
-            Node::deinit(node);
-        }
-    }
-
-    unsafe fn insert_under<'a>(
-        &mut self,
-        mut node: &'a mut Node,
-        mut new_parent: &'a mut Node,
-        side: Side,
-    ) {
-        node.set_color(NodeColor::Red);
-        debug_assert_eq!(node.parent, None);
-        debug_assert_eq!(node.children, [None; 2]);
-        node.parent = Some(NonNull::new_unchecked(new_parent as *mut Node));
-        debug_assert_eq!(new_parent.children[side], None);
-        new_parent.children[side] = Some(NonNull::new_unchecked(node as *mut Node));
-        // Parent node of `new_parent`
-        let mut grandparent: &mut Node;
-        loop {
-            if new_parent.color() == NodeColor::Black {
-                // Case_I1 (new_parent black)
-                return;
-            }
-            // From now on new_parent is red
-            grandparent = match new_parent.parent {
-                Some(mut new_grandparent) => new_grandparent.as_mut(),
-                None => {
-                    // Case_I4
-                    new_parent.set_color(NodeColor::Black);
-                    return;
-                }
-            };
-            // Now new_parent is red and g is not null
-            let new_side = new_parent.which_child_of_parent();
-            if grandparent.children[!new_side]
-                .map_or(true, |mut ptr| ptr.as_mut().color() == NodeColor::Black)
-            {
-                // Case_I56
-                if Some(NonNull::from(node)) == new_parent.children[!side] {
-                    // Case_I6
-                    self.rotate_dir(new_parent, side);
-                    // TODO New value of `node` isn't used after this, why is this even assigned in
-                    // the Zig code?
-                    node = new_parent;
-                    _ = node;
-                    // drop(node);
-                    // node.set_color(NodeColor::Red);
-                    new_parent = grandparent.children[side].unwrap().as_mut();
-                }
-                // Case_I6
-                self.rotate_dir(grandparent, !side);
-                new_parent.set_color(NodeColor::Black);
-                grandparent.set_color(NodeColor::Red);
-                return;
-            }
-            let uncle = grandparent.children[!new_side].unwrap().as_mut();
-            // Case_I2
-            new_parent.set_color(NodeColor::Black);
-            uncle.set_color(NodeColor::Black);
-            node = grandparent;
-            // Iterate 1 black level higher (= 2 tree levels)
-            if let Some(mut new_new_parent) = node.parent {
-                new_parent = new_new_parent.as_mut();
-            } else {
-                return;
-            }
-        }
-        // Case_I3: node is the root and red
-    }
-
-    unsafe fn rotate_dir(&mut self, subtree_root: &mut Node, side: Side) {
-        let sibling = subtree_root.children[!side].unwrap().as_mut();
-        let grandparent_maybe = subtree_root.parent;
-        let cousin_maybe = sibling.children[side];
-        subtree_root.children[!side] = cousin_maybe;
-        if let Some(mut cousin) = cousin_maybe {
-            cousin.as_mut().parent = Some(NonNull::new_unchecked(subtree_root as *mut Node));
-        }
-        sibling.children[side] = Some(NonNull::new_unchecked(subtree_root as *mut Node));
-        subtree_root.parent = Some(NonNull::new_unchecked(sibling as *mut Node));
-        sibling.parent = grandparent_maybe;
-        if let Some(mut grandparent) = grandparent_maybe {
-            grandparent.as_mut().children[subtree_root.which_child_of_parent()] =
-                Some(NonNull::from(sibling));
-        } else {
-            self.root = Some(NonNull::from(sibling));
-        }
-    }
-
-    unsafe fn delete_black_non_root_leaf(&mut self, mut node: &mut Node) {
-        let mut parent_maybe = node.parent.map(|mut ptr| ptr.as_mut());
-        let mut side = node.which_child_of_parent();
-        parent_maybe.as_mut().unwrap().children[side] = None;
-        while let Some(parent) = parent_maybe {
-            let mut sibling = parent.children[!side].unwrap().as_mut();
-            let mut distant_nephew = sibling.children[!side].map(|mut ptr| ptr.as_mut());
-            let mut close_nephew = sibling.children[side].map(|mut ptr| ptr.as_mut());
-            if sibling.color() == NodeColor::Red {
-                // Case_D3
-                self.rotate_dir(parent, side);
-                parent.set_color(NodeColor::Red);
-                sibling.set_color(NodeColor::Black);
-                sibling = close_nephew.unwrap();
-                distant_nephew = sibling.children[!side].map(|mut ptr| ptr.as_mut());
-                if let Some(distant_nephew) = distant_nephew.as_mut() {
-                    if distant_nephew.color() == NodeColor::Red {
-                        self.delete_case_d6(parent, sibling, distant_nephew, side);
-                        return;
-                    }
-                }
-                close_nephew = sibling.children[side].map(|mut ptr| ptr.as_mut());
-                if let Some(close_nephew) = close_nephew {
-                    if close_nephew.color() == NodeColor::Red {
-                        self.delete_case_d5(parent, sibling, close_nephew, side);
-                        return;
-                    }
-                }
-                self.delete_case_d4(parent, sibling);
-                return;
-            }
-            if let Some(distant_nephew) = distant_nephew.as_mut() {
-                if distant_nephew.color() == NodeColor::Red {
-                    self.delete_case_d6(parent, sibling, distant_nephew, side);
-                    return;
-                }
-            }
-            if let Some(close_nephew) = close_nephew {
-                if close_nephew.color() == NodeColor::Red {
-                    self.delete_case_d5(parent, sibling, close_nephew, side);
-                    return;
-                }
-            }
-            if parent.color() == NodeColor::Red {
-                self.delete_case_d4(parent, sibling);
-                return;
-            }
-            sibling.set_color(NodeColor::Red);
-            node = parent;
-            side = node.which_child_of_parent();
-            // Iterate 1 black level higher (= 1 tree level)
-            parent_maybe = node.parent.map(|mut ptr| ptr.as_mut());
-        }
-        // Case_D2: node is the root
-    }
-
-    unsafe fn delete_case_d4(&mut self, parent: &mut Node, sibling: &mut Node) {
-        sibling.set_color(NodeColor::Red);
-        parent.set_color(NodeColor::Black);
-    }
-
-    unsafe fn delete_case_d5(
-        &mut self,
-        parent: &mut Node,
-        sibling: &mut Node,
-        close_nephew: &mut Node,
-        side: Side,
-    ) {
-        self.rotate_dir(sibling, !side);
-        sibling.set_color(NodeColor::Red);
-        close_nephew.set_color(NodeColor::Black);
-        self.delete_case_d6(parent, close_nephew, sibling, side);
-    }
-
-    unsafe fn delete_case_d6(
-        &mut self,
-        parent: &mut Node,
-        sibling: &mut Node,
-        distant_nephew: &mut Node,
-        side: Side,
-    ) {
-        self.rotate_dir(parent, side);
-        sibling.set_color(parent.color());
-        parent.set_color(NodeColor::Black);
-        distant_nephew.set_color(NodeColor::Black);
-    }
+    // /// # Safety
+    // ///
+    // /// The start of `new_segment` is intepreted as a hint of where to put the mapping.
+    // /// Panics if the start and length of `new_segment` are not page aligned, or if the end address
+    // /// is not less than or equal to `arch::process::HIGHEST_USER_ADDRESS`.
+    // pub fn start_find_map(
+    //     &mut self,
+    //     pages_used: &mut usize,
+    //     new_segment: Segment,
+    // ) -> Result<MapTask, AllocError> {
+    //     // 1. Get information about segment start.
+    //     // 2. If we're in a gap large enough to map the segment, just create a task starting at
+    //     //    PageMapping.
+    //     // 3. If we're in a gap, but not one large enough to map the segment, just create a search
+    //     //    task starting at `right_node`.1
+    //     // 4. If we're in a segment, do the same as above just using the mapping we're already
+    //     //    inside.
+    //     debug_assert_eq!(new_segment.start % PAGE_SIZE, 0);
+    //     debug_assert_eq!(new_segment.len % PAGE_SIZE, 0);
+    //     let new_segment_end = new_segment.start + new_segment.len - 1;
+    //     debug_assert!(new_segment_end <= arch::process::HIGHEST_USER_ADDRESS);
+    //     Ok(match self.tree.get_area_info(new_segment.start) {
+    //         AddressInfo::Space {
+    //             start,
+    //             length,
+    //             // left_node: _,
+    //             right_node,
+    //         } => {
+    //             MapTask {
+    //                 state: if start + length - 1 >= new_segment_end {
+    //                     let mut node = self
+    //                         .node_storage
+    //                         .find_and_reserve_node(pages_used)
+    //                         .unwrap();
+    //                     node.set_start(new_segment.start);
+    //                     node.len = new_segment.len;
+    //                     node.flags = new_segment.flags.into();
+    //                     let node_ptr = self.tree.insert(node).as_ptr();
+    //                     MapState::PageMapping {
+    //                         current_address: new_segment.start,
+    //                         new_mapping: node_ptr,
+    //                     }
+    //                 } else {
+    //                     MapState::GapSearch {
+    //                         current_mapping: match right_node {
+    //                             Some(ptr) => ptr,
+    //                             None => return Err(AllocError),
+    //                         },
+    //                     }
+    //                 },
+    //                 new_segment,
+    //             }
+    //         }
+    //         AddressInfo::Segment(node_ptr) => MapTask {
+    //             state: MapState::GapSearch {
+    //                 current_mapping: node_ptr,
+    //             },
+    //             new_segment,
+    //         },
+    //     })
+    // }
 }
 
 struct NodeStorageList {
     head: NonNull<NodeStoragePage>,
+    /// Used in node deletion operations.
+    temp_node: Node,
 }
 
 impl NodeStorageList {
     pub fn new() -> Result<Self, AllocError> {
-        let head_page = PageBox::try_new_in(NodeStoragePage::new(), PhysicalBlockAllocator)?;
+        let head_page = PageBox::try_new_in(
+            NodeStoragePage::new_with_prev_page(None),
+            PhysicalBlockAllocator,
+        )?;
         Ok(Self {
-            head: unsafe { NonNull::new_unchecked(PageBox::into_raw(head_page)) },
+            head: unsafe { NonNull::new_unchecked(PageBox::into_raw_with_allocator(head_page).0) },
+            temp_node: Node::placeholder(),
         })
     }
 
-    /// Searches storage pages for a node space. If no space is found, this will attempt to
-    /// allocate a new storage page, which may fail.
-    pub fn find_and_reserve_node(
-        &mut self,
-        pages_left: &mut Option<&mut u64>,
-    ) -> Result<NonNull<Node>, VMAAllocationError> {
+    /// Searches storage pages for a node space.
+    /// If no space is found, this will attempt to allocate a new storage page, which may fail.
+    fn find_and_reserve_node(&mut self, pages_used: &mut usize) -> Result<NodePtr, VMAMapError> {
         unsafe {
-            let mut current_page = self.head.as_mut();
+            let mut current_page_ptr = self.head;
+            let mut current_page = current_page_ptr.as_mut();
             loop {
                 if current_page.free_entries > 0 {
                     return Ok(current_page.find_and_reserve_node().unwrap());
                 } else {
-                    let Some(mut current_page_ptr) = current_page.next_page else {
-                        break;
-                    };
+                    match current_page.next_page {
+                        Some(next_page_ptr) => current_page_ptr = next_page_ptr,
+                        None => break,
+                    }
                     current_page = current_page_ptr.as_mut();
                 }
             }
             // No space found, allocate new page
-            if let Some(pages_left) = pages_left {
-                if **pages_left == 0 {
-                    return Err(VMAAllocationError::OutOfPagesLeft);
-                }
-                **pages_left -= 1;
-            }
-            let Ok(mut new_page) =
-                PageBox::try_new_in(NodeStoragePage::new(), PhysicalBlockAllocator)
-            else {
-                return Err(VMAAllocationError::OutOfMemory);
+            *pages_used += 1;
+            let Ok(mut new_page) = PageBox::try_new_in(
+                NodeStoragePage::new_with_prev_page(Some(current_page_ptr)),
+                PhysicalBlockAllocator,
+            ) else {
+                return Err(VMAMapError::OutOfMemory);
             };
             let node = new_page.find_and_reserve_node().unwrap();
-            current_page.next_page = Some(NonNull::new_unchecked(PageBox::into_raw(new_page)));
+            current_page.next_page = Some(NonNull::new_unchecked(
+                PageBox::into_raw_with_allocator(new_page).0,
+            ));
             Ok(node)
         }
+    }
+
+    pub fn new_empty_leaf(
+        &mut self,
+        pages_used: &mut usize,
+        size: usize,
+    ) -> Result<NodePtr, VMAMapError> {
+        unsafe {
+            let node_ptr = self.find_and_reserve_node(pages_used)?;
+            node_ptr.write(Node::Leaf(LeafNode::Empty { size }));
+            Ok(node_ptr)
+        }
+    }
+
+    pub fn new_used_leaf(
+        &mut self,
+        pages_used: &mut usize,
+        flags: NodeFlags,
+    ) -> Result<NodePtr, VMAMapError> {
+        unsafe {
+            let node_ptr = self.find_and_reserve_node(pages_used)?;
+            node_ptr.write(Node::Leaf(LeafNode::Used { flags }));
+            Ok(node_ptr)
+        }
+    }
+
+    pub fn new_branch(
+        &mut self,
+        pages_used: &mut usize,
+        pivot: usize,
+        parent: Option<BranchNodePtr>,
+        left: NodePtr,
+        right: NodePtr,
+    ) -> Result<NodePtr, VMAMapError> {
+        unsafe {
+            let node_ptr = self.find_and_reserve_node(pages_used)?;
+            node_ptr.write(Node::Branch(BranchNode::new(
+                pivot,
+                false,
+                NodeColor::Black,
+                parent,
+                left,
+                right,
+            )));
+            Ok(node_ptr)
+        }
+    }
+
+    pub fn get_temp_node(&mut self) -> NodePtr {
+        NodePtr(NonNull::from(&mut self.temp_node))
     }
 }
 
@@ -625,6 +298,7 @@ impl NodeStorageList {
 struct NodeStoragePage {
     pub entries: [Node; Self::MAX_NODES],
     pub next_page: Option<NonNull<NodeStoragePage>>,
+    pub prev_page: Option<NonNull<NodeStoragePage>>,
     pub free_entries: usize,
     pub usage_bitmap: [u8; Self::BITMAP_LEN],
 }
@@ -632,10 +306,10 @@ struct NodeStoragePage {
 impl NodeStoragePage {
     const MAX_NODES: usize = {
         // Iteratively reduce array length until both the array and bitmap can fit
-        let max_array_and_bitmap_space: usize = PAGE_SIZE - (2 * size_of::<usize>());
+        let max_array_and_bitmap_space: usize = PAGE_SIZE - (3 * size_of::<usize>());
         let mut current_num_entries = max_array_and_bitmap_space / size_of::<Node>();
         loop {
-            let extra_bitmap_len = (current_num_entries % 8 > 0) as usize;
+            let extra_bitmap_len = !current_num_entries.is_multiple_of(8) as usize;
             let bitmap_byte_size = (current_num_entries / 8) + extra_bitmap_len;
             let entries_byte_size = current_num_entries * size_of::<Node>();
             if entries_byte_size + bitmap_byte_size <= max_array_and_bitmap_space {
@@ -662,17 +336,18 @@ impl NodeStoragePage {
         }
     };
 
-    pub fn new() -> Self {
+    pub fn new_with_prev_page(prev_page: Option<NonNull<NodeStoragePage>>) -> Self {
         Self {
             entries: core::array::from_fn(|_| Node::placeholder()),
             next_page: None,
+            prev_page,
             free_entries: Self::MAX_NODES,
             usage_bitmap: Self::INITIAL_USAGE_BITMAP,
         }
     }
 
     #[inline]
-    pub fn find_and_reserve_node(&mut self) -> Option<NonNull<Node>> {
+    pub fn find_and_reserve_node(&mut self) -> Option<NodePtr> {
         if self.free_entries == 0 {
             return None;
         }
@@ -683,19 +358,38 @@ impl NodeStoragePage {
                 self.free_entries -= 1;
                 let entry_index = (byte_index * 8) + bit_index;
                 debug_assert!(entry_index < Self::MAX_NODES);
-                return Some(NonNull::from(&mut self.entries[entry_index]));
+                return Some(NodePtr(NonNull::from(&mut self.entries[entry_index])));
             }
         }
         unreachable!();
     }
 
-    /// Marks its place as no longer reserved.
-    pub fn unreserve_node(&mut self, i: usize) {
+    /// Mark the node at the given index as no longer reserved.
+    /// If this returns `true`, then this page is now empty, and has unlinked itself.
+    /// This means it should be now be freed.
+    #[must_use]
+    pub unsafe fn unreserve_node(&mut self, i: usize) -> bool {
         debug_assert!(i < Self::MAX_NODES);
-        let byte_index = i / 8;
-        let bit_index = i % 8;
-        self.usage_bitmap[byte_index] &= !(0x80 >> bit_index);
-        self.free_entries += 1;
+        // Check if the page is now completely empty, and that we're not the head page.
+        if self.free_entries + 1 == Self::MAX_NODES
+            && let Some(mut prev_page) = self.prev_page
+        {
+            // If this is empty, unlink it and report that this page should be freed.
+            unsafe {
+                if let Some(mut next_page) = self.next_page {
+                    next_page.as_mut().prev_page = self.prev_page;
+                }
+                prev_page.as_mut().next_page = self.next_page;
+                true
+            }
+        } else {
+            // If the page still isn't empty, just mark the node as no longer reserved.
+            let byte_index = i / 8;
+            let bit_index = i % 8;
+            self.usage_bitmap[byte_index] &= !(0x80 >> bit_index);
+            self.free_entries += 1;
+            false
+        }
     }
 }
 
@@ -722,378 +416,1079 @@ impl core::ops::Not for Side {
     }
 }
 
-impl core::ops::Index<Side> for [Option<NonNull<Node>>; 2] {
-    type Output = Option<NonNull<Node>>;
+bitfield::bitfield! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[repr(transparent)]
+    pub struct NodeFlags(u32);
+    impl Debug;
+    pub readable, set_readable: 0;
+    pub writable, set_writable: 1;
+    pub executable, set_executable: 2;
+    pub locked, set_locked: 31;
+}
+
+impl From<SegmentFlags> for NodeFlags {
+    fn from(flags: SegmentFlags) -> Self {
+        let mut out = Self(0);
+        out.set_readable(flags.read);
+        out.set_writable(flags.write);
+        out.set_executable(flags.execute);
+        out
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Node {
+    Branch(BranchNode),
+    Leaf(LeafNode),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LeafNode {
+    Empty { size: usize },
+    Used { flags: NodeFlags },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BranchNode {
+    /// 0: Node color
+    /// 1: Is temp null?
+    /// 2-(usize::BITS-1): pivot (masked, not shifted)
+    packed_fields: usize,
+    max_empty_area_size: usize,
+    parent: Option<BranchNodePtr>,
+    left: NodePtr,
+    right: NodePtr,
+}
+
+unsafe impl Sync for BranchNode {}
+
+impl core::ops::Index<Side> for BranchNode {
+    type Output = NodePtr;
 
     fn index(&self, side: Side) -> &Self::Output {
-        &self[side as usize]
+        match side {
+            Side::Left => &self.left,
+            Side::Right => &self.right,
+        }
     }
 }
 
-impl core::ops::IndexMut<Side> for [Option<NonNull<Node>>; 2] {
+impl core::ops::IndexMut<Side> for BranchNode {
     fn index_mut(&mut self, side: Side) -> &mut Self::Output {
-        &mut self[side as usize]
+        match side {
+            Side::Left => &mut self.left,
+            Side::Right => &mut self.right,
+        }
     }
 }
 
-#[derive(Debug)]
-struct Node {
-    start_and_color: usize,
-    pub len: usize,
-    pub flags: usize,
-    parent: Option<NonNull<Node>>,
-    children: [Option<NonNull<Node>>; 2],
-}
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+struct NodePtr(pub NonNull<Node>);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BranchNodePtr(pub NonNull<BranchNode>);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LeafNodePtr(pub NonNull<LeafNode>);
 
 impl Node {
     pub const fn placeholder() -> Self {
+        Self::Leaf(LeafNode::Empty { size: 0 })
+    }
+}
+
+impl BranchNode {
+    pub fn new(
+        pivot: usize,
+        is_temp_null: bool,
+        color: NodeColor,
+        parent: Option<BranchNodePtr>,
+        left: NodePtr,
+        right: NodePtr,
+    ) -> Self {
         Self {
-            start_and_color: 0,
-            len: 0,
-            flags: 0,
-            parent: None,
-            children: [None; 2],
+            packed_fields: (pivot & !0b11) | ((is_temp_null as usize) << 1) | (color as usize),
+            max_empty_area_size: 0,
+            parent,
+            left,
+            right,
         }
     }
 
-    pub unsafe fn deinit(node: *mut Self) {
-        node.write(Node::placeholder());
-        // Get NodeStoragePage containing self
-        let page_address = (node as usize) & !(PAGE_SIZE - 1);
-        let node_storage_page = &mut *(page_address as *mut NodeStoragePage);
-        // Calculate index of self
-        let address_in_page = (node as usize) & (PAGE_SIZE - 1);
-        const ARRAY_OFFSET: usize = offset_of!(NodeStoragePage, entries);
-        let entry_index = (address_in_page - ARRAY_OFFSET) / size_of::<Node>();
-        node_storage_page.unreserve_node(entry_index);
-    }
-
-    pub fn start(&self) -> usize {
-        self.start_and_color & !1
+    pub fn pivot(&self) -> usize {
+        self.packed_fields & !0b11
     }
 
     pub fn color(&self) -> NodeColor {
-        match self.start_and_color & 1 {
+        match self.packed_fields & 0b01 {
             0 => NodeColor::Red,
             1 => NodeColor::Black,
             _ => unreachable!(),
         }
     }
+}
 
-    pub fn set_start(&mut self, address: usize) {
-        let new_start = address & !1;
-        let color = self.start_and_color & 1;
-        self.start_and_color = new_start | color;
+impl NodePtr {
+    pub unsafe fn read(self) -> Node {
+        unsafe { self.0.read() }
     }
 
-    pub fn set_color(&mut self, color: NodeColor) {
-        let new_color = color as usize;
-        let start = self.start();
-        self.start_and_color = start | new_color;
-    }
-
-    /// Panics if the node has no parent.
-    pub fn which_child_of_parent(&self) -> Side {
+    pub unsafe fn write(self, value: Node) {
         unsafe {
-            self.parent.unwrap().as_ref().children[Side::Right].map_or(Side::Left, |child| {
-                match child.as_ptr() == self as *const Self as *mut Self {
-                    false => Side::Left,
-                    true => Side::Right,
+            self.0.write(value);
+        }
+    }
+
+    pub fn raw(self) -> *mut Node {
+        self.0.as_ptr()
+    }
+
+    pub unsafe fn free(self) {
+        unsafe {
+            self.write(Node::placeholder());
+            // Get NodeStoragePage containing self
+            let page_address = (self.raw() as usize) & !(PAGE_SIZE - 1);
+            let node_storage_page = page_address as *mut NodeStoragePage;
+            // Calculate index of self
+            let address_in_page = (self.raw() as usize) & (PAGE_SIZE - 1);
+            const ARRAY_OFFSET: usize = offset_of!(NodeStoragePage, entries);
+            let entry_index = (address_in_page - ARRAY_OFFSET) / size_of::<Node>();
+            let storage_page_needs_freeing = (*node_storage_page).unreserve_node(entry_index);
+            // If the unreserve operation returned true, then it's already unlinked itself from the
+            // storage page list, and we need to free it.
+            if storage_page_needs_freeing {
+                drop(PageBox::from_raw_in(node_storage_page, PhysicalBlockAllocator));
+            }
+        }
+    }
+
+    pub unsafe fn color(self) -> NodeColor {
+        unsafe {
+            match self.0.read() {
+                Node::Branch(branch) => branch.color(),
+                Node::Leaf(_) => NodeColor::Black,
+            }
+        }
+    }
+
+    pub unsafe fn is_branch(self) -> bool {
+        unsafe {
+            match self.0.read() {
+                Node::Branch(_) => true,
+                Node::Leaf(_) => false,
+            }
+        }
+    }
+
+    pub unsafe fn is_leaf(self) -> bool {
+        unsafe {
+            match self.0.read() {
+                Node::Branch(_) => false,
+                Node::Leaf(_) => true,
+            }
+        }
+    }
+
+    pub unsafe fn is_empty_leaf(self) -> bool {
+        unsafe {
+            match self.0.read() {
+                Node::Branch(_) => false,
+                Node::Leaf(LeafNode::Empty { .. }) => true,
+                Node::Leaf(LeafNode::Used { .. }) => false,
+            }
+        }
+    }
+
+    pub unsafe fn is_used_leaf(self) -> bool {
+        unsafe {
+            match self.0.read() {
+                Node::Branch(_) => false,
+                Node::Leaf(LeafNode::Empty { .. }) => false,
+                Node::Leaf(LeafNode::Used { .. }) => true,
+            }
+        }
+    }
+
+    pub unsafe fn branch(self) -> Option<BranchNodePtr> {
+        unsafe {
+            if matches!(self.0.read(), Node::Branch(_)) {
+                Some(self.unwrap_branch())
+            } else {
+                None
+            }
+        }
+    }
+
+    pub unsafe fn unwrap_branch(self) -> BranchNodePtr {
+        unsafe {
+            debug_assert!(matches!(self.0.read(), Node::Branch(_)));
+            BranchNodePtr(
+                self.0
+                    .byte_add(core::mem::offset_of!(Node, Branch.0))
+                    .cast::<BranchNode>(),
+            )
+        }
+    }
+
+    pub unsafe fn unwrap_leaf(self) -> LeafNodePtr {
+        unsafe {
+            debug_assert!(matches!(self.0.read(), Node::Leaf(_)));
+            LeafNodePtr(
+                self.0
+                    .byte_add(core::mem::offset_of!(Node, Leaf.0))
+                    .cast::<LeafNode>(),
+            )
+        }
+    }
+}
+
+impl BranchNodePtr {
+    pub unsafe fn read(self) -> BranchNode {
+        unsafe { self.0.read() }
+    }
+
+    pub fn raw(self) -> *mut BranchNode {
+        self.0.as_ptr()
+    }
+
+    pub unsafe fn node_ptr(self) -> NodePtr {
+        unsafe {
+            NodePtr(
+                self.0
+                    .byte_sub(core::mem::offset_of!(Node, Branch.0))
+                    .cast::<Node>(),
+            )
+        }
+    }
+
+    pub unsafe fn pivot(self) -> usize {
+        unsafe { (*self.raw()).packed_fields & !0b11 }
+    }
+
+    pub unsafe fn color(self) -> NodeColor {
+        unsafe {
+            match (*self.raw()).packed_fields & 0b01 {
+                0 => NodeColor::Red,
+                1 => NodeColor::Black,
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    pub unsafe fn is_temp_null(self) -> bool {
+        unsafe { (*self.raw()).packed_fields & 0b10 != 0 }
+    }
+
+    pub unsafe fn set_pivot(self, pivot: usize) {
+        unsafe {
+            let ptr = self.raw();
+            (*ptr).packed_fields &= 0b11;
+            (*ptr).packed_fields |= pivot & !0b11;
+        }
+    }
+
+    pub unsafe fn set_color(self, color: NodeColor) {
+        unsafe {
+            let ptr = self.raw();
+            (*ptr).packed_fields &= !0b01;
+            (*ptr).packed_fields |= color as usize;
+        }
+    }
+
+    pub unsafe fn set_max_empty_area_size(self, new_size: usize) {
+        unsafe {
+            let ptr = self.raw();
+            (*ptr).max_empty_area_size = new_size;
+        }
+    }
+
+    pub unsafe fn is_left_side(self) -> Option<bool> {
+        unsafe { Some(self.node_ptr() == (*(*self.raw()).parent?.raw()).left) }
+    }
+
+    pub unsafe fn is_right_side(self) -> Option<bool> {
+        unsafe { Some(self.node_ptr() == (*(*self.raw()).parent?.raw()).right) }
+    }
+
+    pub unsafe fn get_parent(self) -> Self {
+        unsafe { (*self.raw()).parent.unwrap() }
+    }
+
+    pub unsafe fn get_grandparent(self) -> Self {
+        unsafe { self.get_parent().get_parent() }
+    }
+
+    pub unsafe fn get_sibling(self) -> NodePtr {
+        unsafe {
+            let self_node = self.node_ptr();
+            let parent = self.get_parent();
+            if self_node == (*parent.raw()).left {
+                (*parent.raw()).right
+            } else if self_node == (*parent.raw()).right {
+                (*parent.raw()).left
+            } else {
+                unreachable!();
+            }
+        }
+    }
+
+    pub unsafe fn recalculate_max_empty_area_size(self) {
+        unsafe {
+            let self_branch = self.0.read();
+            let left_max_size = match self_branch.left.read() {
+                Node::Branch(child_branch) => child_branch.max_empty_area_size,
+                Node::Leaf(LeafNode::Used { .. }) => 0,
+                Node::Leaf(LeafNode::Empty { size }) => size,
+            };
+            let right_max_size = match self_branch.right.read() {
+                Node::Branch(child_branch) => child_branch.max_empty_area_size,
+                Node::Leaf(LeafNode::Used { .. }) => 0,
+                Node::Leaf(LeafNode::Empty { size }) => size,
+            };
+            (*self.raw()).max_empty_area_size = usize::max(left_max_size, right_max_size);
+        }
+    }
+}
+
+impl LeafNodePtr {
+    pub unsafe fn read(self) -> LeafNode {
+        unsafe { self.0.read() }
+    }
+
+    pub fn raw(self) -> *mut LeafNode {
+        self.0.as_ptr()
+    }
+
+    pub unsafe fn is_empty(self) -> bool {
+        unsafe {
+            match self.0.read() {
+                LeafNode::Empty { .. } => true,
+                LeafNode::Used { .. } => false,
+            }
+        }
+    }
+
+    pub unsafe fn unwrap_flags(self) -> NodeFlags {
+        unsafe {
+            match self.0.read() {
+                LeafNode::Used { flags } => flags,
+                LeafNode::Empty { .. } => panic!(),
+            }
+        }
+    }
+
+    pub unsafe fn unwrap_empty_size_ptr(self) -> NonNull<usize> {
+        unsafe {
+            debug_assert!(matches!(self.0.read(), LeafNode::Empty { .. }));
+            self.0
+                .byte_add(core::mem::offset_of!(LeafNode, Empty.size))
+                .cast::<usize>()
+        }
+    }
+
+    pub unsafe fn unwrap_empty_set_size(self, new_size: usize) {
+        unsafe {
+            self.unwrap_empty_size_ptr().write(new_size);
+        }
+    }
+
+    pub unsafe fn unwrap_used_flags_ptr(self) -> NonNull<NodeFlags> {
+        unsafe {
+            debug_assert!(matches!(self.0.read(), LeafNode::Used { .. }));
+            self.0
+                .byte_add(core::mem::offset_of!(LeafNode, Used.flags))
+                .cast::<NodeFlags>()
+        }
+    }
+}
+
+struct VMATree {
+    root: NodePtr,
+    node_storage: NodeStorageList,
+}
+
+struct LeafInfo {
+    pub leaf: NodePtr,
+    pub parent_and_side: Option<(BranchNodePtr, Side)>,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl VMATree {
+    pub fn new(pages_used: &mut usize) -> Result<Self, AllocError> {
+        let mut node_storage = NodeStorageList::new()?;
+        let root = node_storage
+            .new_empty_leaf(pages_used, arch::process::HIGHEST_USER_ADDRESS)
+            .unwrap();
+        Ok(Self { root, node_storage })
+    }
+
+    /// Returns a pointer to the newly inserted leaf node.
+    pub fn insert(
+        &mut self,
+        pages_used: &mut usize,
+        start: usize,
+        len: usize,
+        flags: NodeFlags,
+    ) -> Result<NodePtr, VMAMapError> {
+        unsafe {
+            let end = start + len - 1;
+            let LeafInfo {
+                leaf: gap_node,
+                parent_and_side,
+                start: gap_start,
+                end: gap_end,
+            } = self.get_leaf_containing(start);
+            assert!(gap_node.is_empty_leaf());
+            assert!(gap_start <= start);
+            assert!(end <= gap_end);
+            if gap_start == start && end == gap_end {
+                gap_node.write(Node::Leaf(LeafNode::Used { flags }));
+                if let Some((parent, _side)) = parent_and_side {
+                    self.update_max_empty_area_data(parent);
                 }
-            })
+                Ok(gap_node)
+            } else if gap_start < start && end == gap_end {
+                let new_used_leaf = self.node_storage.new_used_leaf(pages_used, flags)?;
+                let new_branch = self
+                    .node_storage
+                    .new_branch(
+                        pages_used,
+                        start,
+                        parent_and_side.map(|(parent, _)| parent),
+                        gap_node,
+                        new_used_leaf,
+                    )
+                    .inspect_err(|_| new_used_leaf.free())?;
+                gap_node
+                    .unwrap_leaf()
+                    .unwrap_empty_set_size(start - gap_start);
+                self.link_in_branch(new_branch, parent_and_side);
+                Ok(new_used_leaf)
+            } else if gap_start == start && end < gap_end {
+                let new_used_leaf = self.node_storage.new_used_leaf(pages_used, flags)?;
+                let new_branch = self
+                    .node_storage
+                    .new_branch(
+                        pages_used,
+                        end + 1,
+                        parent_and_side.map(|(parent, _)| parent),
+                        new_used_leaf,
+                        gap_node,
+                    )
+                    .inspect_err(|_| new_used_leaf.free())?;
+                gap_node.unwrap_leaf().unwrap_empty_set_size(gap_end - end);
+                self.link_in_branch(new_branch, parent_and_side);
+                Ok(new_used_leaf)
+            } else if gap_start < start && end < gap_end {
+                let new_used_leaf = self.node_storage.new_used_leaf(pages_used, flags)?;
+                let new_empty_leaf = self
+                    .node_storage
+                    .new_empty_leaf(pages_used, gap_end - end)
+                    .inspect_err(|_| new_used_leaf.free())?;
+                let new_end_branch = self
+                    .node_storage
+                    .new_branch(
+                        pages_used,
+                        end + 1,
+                        parent_and_side.map(|(parent, _)| parent),
+                        new_used_leaf,
+                        new_empty_leaf,
+                    )
+                    .inspect_err(|_| {
+                        new_empty_leaf.free();
+                        new_used_leaf.free();
+                    })?;
+                // We allocate all nodes before linking them into the tree, so that we don't have
+                // to deal with unlinking them in case of error.
+                // In the case of this start branch though, that means we have to delay writing the
+                // actual branch data until we've done the first bit of linking.
+                let new_start_branch = self
+                    .node_storage
+                    .find_and_reserve_node(pages_used)
+                    .inspect_err(|_| {
+                        new_end_branch.free();
+                        new_empty_leaf.free();
+                        new_used_leaf.free();
+                    })?;
+                self.link_in_branch(new_end_branch, parent_and_side);
+                let LeafInfo {
+                    leaf: used_node,
+                    parent_and_side,
+                    start: _,
+                    end: gap_end,
+                } = self.get_leaf_containing(start);
+                debug_assert_eq!(gap_end, end);
+                // Now we actually write the start branch data.
+                new_start_branch.write(Node::Branch(BranchNode::new(
+                    start,
+                    false,
+                    NodeColor::Black,
+                    parent_and_side.map(|(parent, _)| parent),
+                    gap_node,
+                    used_node,
+                )));
+                gap_node
+                    .unwrap_leaf()
+                    .unwrap_empty_set_size(start - gap_start);
+                self.link_in_branch(new_start_branch, parent_and_side);
+                Ok(used_node)
+            } else {
+                unreachable!();
+            }
         }
     }
 
-    pub fn minimum(&self) -> NonNull<Self> {
+    pub fn get_leaf_containing(&self, addr: usize) -> LeafInfo {
         unsafe {
-            let mut current_node = NonNull::from(self);
-            while let Some(left_child) = current_node.as_ref().children[0] {
-                current_node = left_child;
+            debug_assert!(addr <= arch::process::HIGHEST_USER_ADDRESS);
+            let mut current_parent_and_side: Option<(BranchNodePtr, Side)> = None;
+            let mut current_node: NodePtr = self.root;
+            let mut current_start: usize = 0;
+            let mut current_end: usize = arch::process::HIGHEST_USER_ADDRESS.saturating_add(1);
+            while let Node::Branch(branch) = current_node.read() {
+                if addr < branch.pivot() {
+                    debug_assert!(branch.pivot() <= current_end);
+                    current_end = branch.pivot();
+                    current_parent_and_side = Some((current_node.unwrap_branch(), Side::Left));
+                    current_node = branch.left;
+                } else {
+                    debug_assert!(branch.pivot() >= current_start);
+                    current_start = branch.pivot();
+                    current_parent_and_side = Some((current_node.unwrap_branch(), Side::Right));
+                    current_node = branch.right;
+                }
             }
-            current_node
+            LeafInfo {
+                leaf: current_node,
+                parent_and_side: current_parent_and_side,
+                start: current_start,
+                end: current_end - 1,
+            }
         }
     }
 
-    pub fn maximum(&self) -> NonNull<Self> {
+    unsafe fn link_in_branch(
+        &mut self,
+        new_branch: NodePtr,
+        new_parent_and_side: Option<(BranchNodePtr, Side)>,
+    ) {
         unsafe {
-            let mut current_node = NonNull::from(self);
-            while let Some(right_child) = current_node.as_ref().children[1] {
-                current_node = right_child;
+            match new_parent_and_side {
+                Some((new_parent, side)) => {
+                    (&mut *new_parent.raw())[side] = new_branch;
+                    new_branch.unwrap_branch().set_color(NodeColor::Red);
+                    // Fix the tree if the properties are violated
+                    if (*new_parent.raw()).parent.is_some() {
+                        self.fix_insert(new_branch);
+                    }
+                }
+                None => self.root = new_branch,
             }
-            current_node
+            self.update_max_empty_area_data(new_branch.unwrap_branch());
         }
     }
 
-    pub fn previous(&self) -> Option<NonNull<Self>> {
+    unsafe fn fix_insert(&mut self, node: NodePtr) {
         unsafe {
-            if let Some(left_child) = self.children[0] {
-                return Some(left_child.as_ref().maximum());
+            let mut k = if node.is_branch() {
+                node.unwrap_branch()
+            } else {
+                panic!();
+            };
+            while k.get_parent().color() == NodeColor::Red {
+                if k.get_parent().is_right_side().unwrap() {
+                    let u = (*k.get_grandparent().raw()).left;
+                    match u.color() {
+                        NodeColor::Red => {
+                            u.unwrap_branch().set_color(NodeColor::Black);
+                            k.get_parent().set_color(NodeColor::Black);
+                            k.get_grandparent().set_color(NodeColor::Red);
+                            k = k.get_grandparent();
+                        }
+                        NodeColor::Black => {
+                            if k.is_left_side().unwrap() {
+                                k = k.get_parent();
+                                self.right_rotate(k);
+                            }
+                            k.get_parent().set_color(NodeColor::Black);
+                            k.get_grandparent().set_color(NodeColor::Red);
+                            self.left_rotate(k.get_grandparent());
+                        }
+                    }
+                } else {
+                    let u = (*k.get_grandparent().raw()).right;
+                    match u.color() {
+                        NodeColor::Red => {
+                            u.unwrap_branch().set_color(NodeColor::Black);
+                            k.get_parent().set_color(NodeColor::Black);
+                            k.get_grandparent().set_color(NodeColor::Red);
+                            k = k.get_grandparent();
+                        }
+                        NodeColor::Black => {
+                            if k.is_right_side().unwrap() {
+                                k = k.get_parent();
+                                self.left_rotate(k);
+                            }
+                            k.get_parent().set_color(NodeColor::Black);
+                            k.get_grandparent().set_color(NodeColor::Red);
+                            self.right_rotate(k.get_grandparent());
+                        }
+                    }
+                }
+                if k.node_ptr() == self.root {
+                    break;
+                }
             }
-            let mut current_node = self;
-            loop {
-                let Some(parent) = current_node.parent else {
-                    return None;
+            self.root.unwrap_branch().set_color(NodeColor::Black);
+        }
+    }
+
+    /// Panics if `addr` does not belong to a used leaf node.
+    pub fn delete(&mut self, addr: usize) {
+        unsafe {
+            let LeafInfo {
+                leaf,
+                parent_and_side,
+                start: leaf_start,
+                end: leaf_end,
+            } = self.get_leaf_containing(addr);
+            assert!(
+                matches!(leaf.read(), Node::Leaf(LeafNode::Used { .. })),
+                "{:?}",
+                leaf.read()
+            );
+            (*leaf.raw()) = Node::Leaf(LeafNode::Empty {
+                size: leaf_end + 1 - leaf_start,
+            });
+            if let Some((parent, side)) = parent_and_side {
+                let sibling = parent.read()[!side];
+                if sibling.is_empty_leaf() {
+                    // If sibling is also an empty leaf, then combine their sizes and delete the
+                    // parent.
+                    let leaf_size = leaf.unwrap_leaf().unwrap_empty_size_ptr();
+                    let sibling_size = sibling.unwrap_leaf().unwrap_empty_size_ptr();
+                    let combined_size = leaf_size.read() + sibling_size.read();
+                    leaf_size.write(combined_size);
+                    sibling_size.write(combined_size);
+                    self.delete_branch(parent);
+                }
+                'gap_join_loop: loop {
+                    let LeafInfo {
+                        leaf: _,
+                        parent_and_side,
+                        start: _,
+                        end: _,
+                    } = self.get_leaf_containing(addr);
+                    // Update area sizes up to root
+                    if let Some((parent, _side)) = parent_and_side {
+                        self.update_max_empty_area_data(parent);
+                    }
+                    // Traverse up the tree from the new segment, delete useless pivots
+                    let mut current_branch = parent_and_side.map(|(p, _)| p);
+                    while let Some(branch) = current_branch {
+                        let left_max = self.max_leaf((*branch.raw()).left);
+                        let right_min = self.min_leaf((*branch.raw()).right);
+                        if left_max.is_empty() && right_min.is_empty() {
+                            // Combine sizes
+                            let left_max_size = left_max.unwrap_empty_size_ptr();
+                            let right_min_size = right_min.unwrap_empty_size_ptr();
+                            let combined_size = left_max_size.read() + right_min_size.read();
+                            left_max_size.write(combined_size);
+                            right_min_size.write(combined_size);
+                            // Delete splitting pivot
+                            self.delete_branch(branch);
+                            continue 'gap_join_loop;
+                        } else {
+                            current_branch = (*branch.raw()).parent;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    unsafe fn delete_branch(&mut self, delete_branch: BranchNodePtr) {
+        unsafe {
+            let delete_node = delete_branch.node_ptr();
+            let moved_up_node: NodePtr;
+            let moved_up_node_parent: Option<BranchNodePtr>;
+            let delete_node_color: NodeColor;
+            if (*delete_branch.raw()).left.is_leaf() || (*delete_branch.raw()).right.is_leaf() {
+                (moved_up_node, moved_up_node_parent) =
+                    self.delete_node_with_zero_or_one_child(delete_branch);
+                delete_node_color = delete_branch.color();
+                delete_node.free();
+            } else {
+                // Node has two children
+                let successor = self.find_min((*delete_branch.raw()).right.unwrap_branch());
+                delete_branch.set_pivot(successor.pivot());
+                delete_branch.set_max_empty_area_size((*successor.raw()).max_empty_area_size);
+                (moved_up_node, moved_up_node_parent) =
+                    self.delete_node_with_zero_or_one_child(successor);
+                delete_node_color = successor.color();
+                successor.node_ptr().free();
+            }
+            if delete_node_color == NodeColor::Black {
+                let moved_up_branch = moved_up_node.unwrap_branch();
+                self.fix_delete(moved_up_branch);
+                if moved_up_branch.is_temp_null() {
+                    let left_child = (*moved_up_branch.raw()).left;
+                    let right_child = (*moved_up_branch.raw()).right;
+                    if left_child.is_used_leaf() {
+                        debug_assert!(
+                            !right_child.is_used_leaf(),
+                            "{:?}",
+                            right_child.unwrap_leaf().unwrap_flags(),
+                        );
+                        (*moved_up_node.raw()) = (*moved_up_branch.raw()).left.read();
+                        left_child.free();
+                        right_child.free();
+                    } else {
+                        (*moved_up_node.raw()) = (*moved_up_branch.raw()).right.read();
+                        left_child.free();
+                        right_child.free();
+                    }
+                }
+            }
+            // Update adjacent subtree area sizes
+            if let Some(parent) = moved_up_node_parent {
+                self.update_max_empty_area_data(parent);
+            }
+        }
+    }
+
+    unsafe fn delete_node_with_zero_or_one_child(
+        &mut self,
+        node: BranchNodePtr,
+    ) -> (NodePtr, Option<BranchNodePtr>) {
+        unsafe {
+            let parent = (*node.raw()).parent;
+            if (*node.raw()).left.is_branch() {
+                self.replace_node(node, (*node.raw()).left);
+                debug_assert!(
+                    !(*node.raw()).right.is_used_leaf(),
+                    "{:?}",
+                    (*node.raw()).right.unwrap_leaf().unwrap_flags(),
+                );
+                (*node.raw()).right.free();
+                ((*node.raw()).left, parent)
+            } else if (*node.raw()).right.is_branch() {
+                self.replace_node(node, (*node.raw()).right);
+                debug_assert!(
+                    !(*node.raw()).left.is_used_leaf(),
+                    "{:?}",
+                    (*node.raw()).left.unwrap_leaf().unwrap_flags(),
+                );
+                (*node.raw()).left.free();
+                ((*node.raw()).right, parent)
+            } else {
+                let new_child = match node.color() {
+                    NodeColor::Black => {
+                        let temp_node_ptr = self.node_storage.get_temp_node();
+                        temp_node_ptr.write(Node::Branch(BranchNode::new(
+                            0,
+                            true,
+                            NodeColor::Black,
+                            None,
+                            (*node.raw()).left,
+                            (*node.raw()).right,
+                        )));
+                        temp_node_ptr
+                    }
+                    NodeColor::Red => {
+                        if (*node.raw()).left.is_used_leaf() {
+                            debug_assert!(
+                                !(*node.raw()).right.is_used_leaf(),
+                                "{:?}",
+                                (*node.raw()).right.unwrap_leaf().unwrap_flags(),
+                            );
+                            (*node.raw()).right.free();
+                            (*node.raw()).left
+                        } else {
+                            debug_assert!(
+                                !(*node.raw()).left.is_used_leaf(),
+                                "{:?}",
+                                (*node.raw()).left.unwrap_leaf().unwrap_flags(),
+                            );
+                            (*node.raw()).left.free();
+                            (*node.raw()).right
+                        }
+                    }
                 };
-                match current_node.which_child_of_parent() {
-                    Side::Left => current_node = parent.as_ref(),
-                    Side::Right => return Some(parent),
-                }
+                self.replace_node(node, new_child);
+                (new_child, parent)
             }
         }
     }
 
-    pub fn next(&self) -> Option<NonNull<Self>> {
+    unsafe fn fix_delete(&mut self, mut node: BranchNodePtr) {
         unsafe {
-            if let Some(left_child) = self.children[1] {
-                return Some(left_child.as_ref().minimum());
-            }
-            let mut current_node = self;
-            loop {
-                let Some(parent) = current_node.parent else {
-                    return None;
-                };
-                match current_node.which_child_of_parent() {
-                    Side::Left => return Some(parent),
-                    Side::Right => current_node = parent.as_ref(),
+            while node.node_ptr() != self.root {
+                let mut sibling = node.get_sibling().unwrap_branch();
+                if sibling.color() == NodeColor::Red {
+                    self.handle_red_sibling(node, sibling);
+                    sibling = node.get_sibling().unwrap_branch();
                 }
+                if (*sibling.raw()).left.color() == NodeColor::Black
+                    && (*sibling.raw()).right.color() == NodeColor::Black
+                {
+                    sibling.set_color(NodeColor::Red);
+                    if node.get_parent().color() == NodeColor::Red {
+                        node.get_parent().set_color(NodeColor::Black);
+                    } else {
+                        node = node.get_parent();
+                        continue;
+                    }
+                } else {
+                    self.handle_black_sibling_at_least_one_red_child(node, sibling);
+                }
+                break;
+            }
+            if node.node_ptr() == self.root {
+                node.set_color(NodeColor::Black);
             }
         }
     }
 
-    /// Swaps tree positions between two nodes including parents, children and color.
-    pub fn swap_positions(x: &mut Self, y: &mut Self) {
+    unsafe fn handle_red_sibling(&mut self, node: BranchNodePtr, sibling: BranchNodePtr) {
         unsafe {
-            // Update child pointer in parents
-            if let Some(mut parent) = x.parent {
-                let side = x.which_child_of_parent();
-                parent.as_mut().children[side] = Some(NonNull::new_unchecked(y as *mut Self));
+            sibling.set_color(NodeColor::Black);
+            node.get_parent().set_color(NodeColor::Red);
+            if node.is_left_side().unwrap() {
+                self.left_rotate(node.get_parent());
+            } else if node.is_right_side().unwrap() {
+                self.right_rotate(node.get_parent());
+            } else {
+                unreachable!();
             }
-            if let Some(mut parent) = y.parent {
-                let side = y.which_child_of_parent();
-                parent.as_mut().children[side] = Some(NonNull::new_unchecked(x as *mut Self));
+        }
+    }
+
+    unsafe fn handle_black_sibling_at_least_one_red_child(
+        &mut self,
+        node: BranchNodePtr,
+        mut sibling: BranchNodePtr,
+    ) {
+        unsafe {
+            let is_left = node.is_left_side().unwrap();
+            if is_left && (*sibling.raw()).right.color() == NodeColor::Black {
+                (*sibling.raw())
+                    .left
+                    .unwrap_branch()
+                    .set_color(NodeColor::Black);
+                sibling.set_color(NodeColor::Red);
+                self.right_rotate(sibling);
+                sibling = (*node.get_parent().raw()).right.unwrap_branch();
+            } else if !is_left && (*sibling.raw()).left.color() == NodeColor::Black {
+                (*sibling.raw())
+                    .right
+                    .unwrap_branch()
+                    .set_color(NodeColor::Black);
+                sibling.set_color(NodeColor::Red);
+                self.left_rotate(sibling);
+                sibling = (*node.get_parent().raw()).left.unwrap_branch();
             }
-            // Swap parent pointers
-            core::mem::swap(&mut x.parent, &mut y.parent);
-            // Swap color
-            let x_color = x.color();
-            let y_color = y.color();
-            x.set_color(y_color);
-            y.set_color(x_color);
-            // Update parent pointer in children
-            for child in &mut x.children {
-                if let Some(child) = child {
-                    child.as_mut().parent = Some(NonNull::new_unchecked(y as *mut Self));
+            sibling.set_color(node.get_parent().color());
+            node.get_parent().set_color(NodeColor::Black);
+            if is_left {
+                (*sibling.raw())
+                    .right
+                    .unwrap_branch()
+                    .set_color(NodeColor::Black);
+                self.left_rotate(node.get_parent());
+            } else {
+                (*sibling.raw())
+                    .left
+                    .unwrap_branch()
+                    .set_color(NodeColor::Black);
+                self.right_rotate(node.get_parent());
+            }
+        }
+    }
+
+    fn find_min(&self, mut node: BranchNodePtr) -> BranchNodePtr {
+        unsafe {
+            while (*node.raw()).left.is_branch() {
+                node = (*node.raw()).left.unwrap_branch();
+            }
+            node
+        }
+    }
+
+    fn min_leaf(&self, mut node: NodePtr) -> LeafNodePtr {
+        unsafe {
+            while let Some(branch) = node.branch() {
+                node = (*branch.raw()).left;
+            }
+            node.unwrap_leaf()
+        }
+    }
+
+    fn max_leaf(&self, mut node: NodePtr) -> LeafNodePtr {
+        unsafe {
+            while let Some(branch) = node.branch() {
+                node = (*branch.raw()).right;
+            }
+            node.unwrap_leaf()
+        }
+    }
+
+    fn update_max_empty_area_data(&mut self, lowest_branch: BranchNodePtr) {
+        unsafe {
+            let mut current_branch_ptr = Some(lowest_branch);
+            while let Some(branch_ptr) = current_branch_ptr {
+                let branch = branch_ptr.read();
+                let mut current_max = 0;
+                for child in [branch.left, branch.right] {
+                    let child_max_empty_area_size = match child.read() {
+                        Node::Branch(child_branch) => child_branch.max_empty_area_size,
+                        Node::Leaf(LeafNode::Used { .. }) => 0,
+                        Node::Leaf(LeafNode::Empty { size }) => size,
+                    };
+                    current_max = usize::max(current_max, child_max_empty_area_size);
                 }
+                branch_ptr.set_max_empty_area_size(current_max);
+                current_branch_ptr = branch.parent;
             }
-            for child in &mut y.children {
-                if let Some(child) = child {
-                    child.as_mut().parent = Some(NonNull::new_unchecked(x as *mut Self));
+        }
+    }
+
+    unsafe fn replace_node(&mut self, old_branch: BranchNodePtr, new_node: NodePtr) {
+        unsafe {
+            match old_branch.is_left_side() {
+                Some(true) => (*old_branch.get_parent().raw()).left = new_node,
+                Some(false) => (*old_branch.get_parent().raw()).right = new_node,
+                None => self.root = new_node,
+            }
+            if let Some(branch) = new_node.branch() {
+                (*branch.raw()).parent = (*old_branch.raw()).parent;
+            }
+        }
+    }
+
+    unsafe fn left_rotate(&mut self, node: BranchNodePtr) {
+        unsafe {
+            let right_node = (*node.raw()).right;
+            let right = right_node.unwrap_branch();
+            (*node.raw()).right = (*right.raw()).left;
+            if let Node::Branch(branch) = &mut *(*right.raw()).left.raw() {
+                branch.parent = Some(node);
+            }
+            (*right.raw()).parent = (*node.raw()).parent;
+            match node.is_left_side() {
+                Some(true) => (*node.get_parent().raw()).left = right_node,
+                Some(false) => (*node.get_parent().raw()).right = right_node,
+                None => self.root = right_node,
+            }
+            (*right.raw()).left = node.node_ptr();
+            (*node.raw()).parent = Some(right);
+            node.recalculate_max_empty_area_size();
+            right.recalculate_max_empty_area_size();
+        }
+    }
+
+    unsafe fn right_rotate(&mut self, node: BranchNodePtr) {
+        unsafe {
+            let left_node = (*node.raw()).left;
+            let left = left_node.unwrap_branch();
+            (*node.raw()).left = (*left.raw()).right;
+            if let Node::Branch(branch) = &mut *(*left.raw()).right.raw() {
+                branch.parent = Some(node);
+            }
+            (*left.raw()).parent = (*node.raw()).parent;
+            match node.is_left_side() {
+                Some(true) => (*node.get_parent().raw()).left = left_node,
+                Some(false) => (*node.get_parent().raw()).right = left_node,
+                None => self.root = left_node,
+            }
+            (*left.raw()).right = node.node_ptr();
+            (*node.raw()).parent = Some(left);
+            node.recalculate_max_empty_area_size();
+            left.recalculate_max_empty_area_size();
+        }
+    }
+}
+
+impl Drop for VMATree {
+    fn drop(&mut self) {
+        // Drop the tree recursively.
+        // As this is a roughly-balanced binary tree, the maximum depth should be pretty low, so
+        // we shouldn't have any issues around overflowing the kernel stack.
+        unsafe fn drop_subtree(node: NodePtr) {
+            unsafe {
+                if let Node::Branch(branch) = &*node.raw() {
+                    drop_subtree(branch.left);
+                    drop_subtree(branch.right);
                 }
+                node.free();
             }
-            // Swap children
-            core::mem::swap(&mut x.children, &mut y.children);
+        }
+        unsafe {
+            drop_subtree(self.root);
         }
     }
 }
 
 #[derive(Debug)]
 pub struct MapTask {
-    state: MapState,
-    new_segment: Segment,
-}
-
-#[derive(Debug)]
-enum MapState {
-    /// Old VMA mappings are being removed or truncated, and memory pages are being unmapped.
-    MappingRemoval {
-        current_unmap_task: UnmapMemTask,
-        next_mapping: Option<NonNull<Node>>,
-    },
-    /// A gap in VMA mappings large enough for the new mapping is being searched for.
-    GapSearch { current_mapping: NonNull<Node> },
-    /// New memory pages are being mapped, followed by a new VMA mapping being created.
-    PageMapping { current_address: usize },
+    map_mem_task: MapMemTask,
 }
 
 impl MapTask {
-    pub fn run<F>(
-        &mut self,
-        allocator: &mut VMAAllocator,
-        pages_left: &mut Option<&mut u64>,
-        mut should_suspend: F,
-    ) -> Poll<Result<(), VMAAllocationError>>
+    /// If this completes, returns the total number of pages freed.
+    pub fn run<F>(&mut self, allocator: &mut VMAAllocator, mut should_suspend: F) -> Poll<Result<usize, MapMemError>>
     where
         F: FnMut() -> bool,
     {
-        unsafe {
-            loop {
-                match &mut self.state {
-                    MapState::MappingRemoval {
-                        current_unmap_task,
-                        next_mapping,
-                    } => match current_unmap_task
-                        .run(&mut allocator.page_mapper, &mut should_suspend)
-                    {
-                        // Unmap task suspend, so we suspend too
-                        Poll::Pending => return Poll::Pending,
-                        // Current unmap task done, move on
-                        Poll::Ready(_) => {
-                            let next_mapping = match next_mapping {
-                                None => {
-                                    self.state = MapState::PageMapping {
-                                        current_address: self.new_segment.start,
-                                    };
-                                    continue;
-                                }
-                                Some(ptr) => ptr.as_mut(),
-                            };
-                            // Get new next mapping for removal next cycle, if needs removing
-                            let new_next_mapping = next_mapping.next().and_then(|new_next| {
-                                match self.new_segment.start + self.new_segment.len
-                                    <= new_next.as_ref().start()
-                                {
-                                    false => Some(new_next),
-                                    true => None,
-                                }
-                            });
-                            let next_mapping_end = next_mapping.start() + next_mapping.len;
-                            let new_segment_end = self.new_segment.start + self.new_segment.len;
-                            let new_vs_old_start =
-                                usize::cmp(&self.new_segment.start, &next_mapping.start());
-                            let new_vs_old_end = usize::cmp(&new_segment_end, &next_mapping_end);
-                            let (unmap_start, unmap_num_pages) =
-                                match (new_vs_old_start, new_vs_old_end) {
-                                    //    |     old mapping     |
-                                    // <--|     new mapping     |-->
-                                    (
-                                        Ordering::Less | Ordering::Equal,
-                                        Ordering::Equal | Ordering::Greater,
-                                    ) => {
-                                        let unmap_start = next_mapping.start();
-                                        let unmap_num_pages =
-                                            next_mapping.len / arch::paging::PAGE_SIZE;
-                                        allocator.tree.delete(next_mapping);
-                                        (unmap_start, unmap_num_pages)
-                                    }
-                                    // |     old mapping     |
-                                    //   |    new mapping    |-->
-                                    (Ordering::Greater, Ordering::Equal | Ordering::Greater) => {
-                                        let unmap_num_pages = (next_mapping_end
-                                            - self.new_segment.start)
-                                            / arch::paging::PAGE_SIZE;
-                                        next_mapping.len =
-                                            self.new_segment.start - next_mapping.start();
-                                        (self.new_segment.start, unmap_num_pages)
-                                    }
-                                    //    |     old mapping     |
-                                    // <--|    new mapping    |
-                                    (Ordering::Less | Ordering::Equal, Ordering::Less) => {
-                                        let unmap_start = next_mapping.start();
-                                        let unmap_num_pages = (new_segment_end - unmap_start)
-                                            / arch::paging::PAGE_SIZE;
-                                        next_mapping.len = next_mapping_end - new_segment_end;
-                                        next_mapping.set_start(new_segment_end);
-                                        (unmap_start, unmap_num_pages)
-                                    }
-                                    // |     old mapping     |
-                                    //   |   new mapping   |
-                                    (Ordering::Greater, Ordering::Less) => {
-                                        // Split current mapping into two mappings, before and after new mapping
-                                        next_mapping.len =
-                                            self.new_segment.start - next_mapping.start();
-                                        // TODO Create a NodeBox type, because this shouldn't have to be unsafe
-                                        let new_split_node = allocator
-                                            .node_storage
-                                            .find_and_reserve_node(pages_left)
-                                            .expect("out of memory when reserving VMA node")
-                                            .as_mut();
-                                        new_split_node.set_start(new_segment_end);
-                                        new_split_node.len = next_mapping_end - new_segment_end;
-                                        new_split_node.flags = next_mapping.flags;
-                                        allocator.tree.insert(new_split_node);
-                                        (
-                                            self.new_segment.start,
-                                            self.new_segment.len / arch::paging::PAGE_SIZE,
-                                        )
-                                    }
-                                };
-                            self.state = MapState::MappingRemoval {
-                                current_unmap_task: UnmapMemTask::new(unmap_start, unmap_num_pages),
-                                next_mapping: new_next_mapping,
-                            };
-                        }
-                    },
-                    MapState::GapSearch { current_mapping } => {
-                        let current_mapping = current_mapping.as_ref();
-                        let next_mapping = current_mapping.next();
-                        let gap_size = match next_mapping {
-                            Some(next_mapping) => {
-                                next_mapping.as_ref().start()
-                                    - (current_mapping.start() + current_mapping.len)
-                            }
-                            None => {
-                                arch::process::HIGHEST_USER_ADDRESS
-                                    - (current_mapping.start() + current_mapping.len)
-                            }
-                        };
-                        if gap_size >= self.new_segment.len {
-                            // Found large enough gap, place mapping here
-                            // TODO Implement some kind of ASLR?
-                            self.state = MapState::PageMapping {
-                                current_address: self.new_segment.start,
-                            };
-                        } else {
-                            self.state = match next_mapping {
-                                Some(mapping) => MapState::GapSearch {
-                                    current_mapping: mapping,
-                                },
-                                None => {
-                                    return Poll::Ready(Err(VMAAllocationError::OutOfAddressSpace))
-                                }
-                            };
-                        }
-                    }
-                    MapState::PageMapping { current_address } => {
-                        // 1. Check if we're done yet, add new segment and finish if we are (put
-                        //    unreachable in case of error adding new segment).
-                        // 2. Map new page (check document to see what should be done about
-                        //    errors).
-                        // 3. Update state for new address.
-                        // TODO Decide what to do about ^this comment (probably just clean up and
-                        // explain other branches as well)
-                        // Insert segment if finished
-                        if *current_address >= self.new_segment.start + self.new_segment.len {
-                            // TODO NEXT Add pages_left (note 2023/8/4: is this done?)
-                            let node = allocator
-                                .node_storage
-                                .find_and_reserve_node(pages_left)
-                                .unwrap()
-                                .as_mut();
-                            node.set_start(self.new_segment.start);
-                            node.len = self.new_segment.len;
-                            node.flags = self.new_segment.flags.into();
-                            allocator.tree.insert(node);
-                            return Poll::Ready(Ok(()));
-                        } else {
-                            // TODO NEXT What are we doing with readable flag?
-                            // TODO NEXT Sort out some platform independent page flag system, fix
-                            // this to use this
-                            let mut flag_data = PageTableData::default();
-                            flag_data.writable = self.new_segment.flags.write;
-                            flag_data.no_execute = !self.new_segment.flags.execute;
-                            flag_data.user_accessable = true;
-                            // TODO NEXT Add pages_left
-                            allocator
-                                .page_mapper
-                                .map_blank_page(*current_address, flag_data.into(), pages_left)
-                                .unwrap();
-                            *current_address += PAGE_SIZE;
-                        }
-                    }
+        match self
+            .map_mem_task
+            .run(&mut allocator.page_mapper, &mut should_suspend)
+        {
+            Poll::Pending => Poll::Pending,
+            err @ Poll::Ready(Err(_)) => err,
+            Poll::Ready(Ok(pages_allocated)) => {
+                let mut tree = allocator.tree.lock();
+                let start_address = self.map_mem_task.start_address();
+                let LeafInfo { leaf, .. } = tree.get_leaf_containing(start_address);
+                unsafe {
+                    let flags = leaf.unwrap_leaf().unwrap_used_flags_ptr().as_ptr();
+                    debug_assert!((*flags).locked());
+                    (&mut *flags).set_locked(false);
                 }
-                if should_suspend() {
-                    return Poll::Pending;
-                }
+                tree.delete(start_address);
+                Poll::Ready(Ok(pages_allocated))
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct UnmapTask {
+    start_address: usize,
+    unmap_mem_task: UnmapMemTask,
+}
+
+impl UnmapTask {
+    /// If this completes, returns the total number of pages freed.
+    pub fn run<F>(&mut self, allocator: &mut VMAAllocator, mut should_suspend: F) -> Poll<usize>
+    where
+        F: FnMut() -> bool,
+    {
+        match self
+            .unmap_mem_task
+            .run(&mut allocator.page_mapper, &mut should_suspend)
+        {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(pages_freed) => {
+                let mut tree = allocator.tree.lock();
+                tree.delete(self.start_address);
+                Poll::Ready(pages_freed)
             }
         }
     }

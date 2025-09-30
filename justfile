@@ -12,8 +12,6 @@ copy := if os_family == "windows" { "1>NUL copy" } else { "cp" }
 copydir := if os_family == "windows" { "1>NUL xcopy /c /q /e /i" } else { "cp -r" }
 mkdir_create_parents := if os_family == "windows" { "mkdir" } else { "mkdir -p" }
 silence_stderr := if os_family == "windows" { "2>NUL" } else { "2>/dev/null" }
-# Works around issues with zigup on windows
-zig_build_end := if os_family == "windows" { "& exit" } else { "" }
 
 _bootx64_path := join("kernel", "boot", "efi", "out", "bootx64.efi")
 
@@ -50,7 +48,7 @@ _isoroot := join("out", "isoroot")
         -boot_image any efi_boot_part="--efi-boot-image"
     echo Done!
 
-# Builds and x86_64 9x iso using the Limine bootloader
+# Builds an x86_64 9x iso using the Limine bootloader
 @build-x86_64-limine: (_compile-kernel "x86_64") _clean-output (_build-initrd _x64_target)
     echo - Building ISO...
     {{mkdir_create_parents}} {{join(_isoroot, "boot", "limine")}}
@@ -114,14 +112,8 @@ test_program_dir := join("out", "initrd", "bin", "sys")
     {{rmdir}} out {{silence_stderr}} || true
     mkdir out
 
-[windows]
-[linux]
 @_zig-build dir *args:
-    cd {{dir}} && zig build {{args}} {{zig_build_end}}
-
-[macos]
-@_zig-build dir *args:
-    true
+    cd {{dir}} && zig 0.7.1 build {{args}}
 
 # Rust compilation
 
@@ -131,7 +123,7 @@ _rust_kernel_out_dir := join("kernel_rust", "target", "x86_64-unknown-kernel", "
 _rust_kernel_bin := join(_rust_kernel_out_dir, "kernel")
 _rust_unstripped_kernel_bin := join(_rust_kernel_out_dir, "kernel_unstripped")
 
-# Builds and x86_64 9x Rust iso (EXPERIMENTAL) using the Limine bootloader
+# Builds an x86_64 9x Rust iso (EXPERIMENTAL) using the Limine bootloader
 @build-x86_64-limine-rust: (_compile-rust-kernel "x86_64") _clean-output (_build-initrd _x64_target)
     echo - Building ISO...
     {{mkdir_create_parents}} {{join(_isoroot, "boot", "limine")}}
@@ -150,9 +142,9 @@ _rust_unstripped_kernel_bin := join(_rust_kernel_out_dir, "kernel_unstripped")
     limine bios-install 9x.iso
     echo Done!
 
-@_compile-rust-kernel arch +flags="":
+@_compile-rust-kernel arch:
     echo - Compiling kernel...
-    cd kernel_rust && cargo build {{target_start + arch + target_end}} {{flags}}
+    cd kernel_rust && cargo build {{target_start + arch + target_end}}
     cd {{_rust_kernel_out_dir}} && ld.lld \
         --whole-archive libkernel.a \
         -T../../../targets/x86_64-unknown-kernel.ld \

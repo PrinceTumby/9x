@@ -41,46 +41,50 @@ static LEGACY_IRQS: Mutex<[Option<IoHandler>; 16]> = Mutex::new([
 ]);
 
 pub unsafe fn map_legacy_irq(irq: u8, handler: idt::HandlerFunc) {
-    assert!(irq < 16);
-    let mut legacy_irqs = LEGACY_IRQS.lock();
-    let idt = &mut (*tls::get_mut()).idt;
-    match *ACTIVE_IO_INTERRUPT_SYSTEM.lock() {
-        Some(Controller::Apic) => {
-            let index = apic::try_find_and_reserve_entry()
-                .expect("APIC should have interrupt vectors available");
-            idt.apic_interrupts[index as usize] =
-                idt::Entry::with_handler_and_generic_stack(handler);
-            apic::register_legacy_irq(irq, 128 + index);
-            assert!(legacy_irqs[irq as usize].is_none());
-            legacy_irqs[irq as usize] = Some(IoHandler {
-                idt_entry: &mut idt.apic_interrupts[index as usize]
-                    as *mut idt::Entry<idt::HandlerFunc>,
-                entry_index: index,
-            });
+    unsafe {
+        assert!(irq < 16);
+        let mut legacy_irqs = LEGACY_IRQS.lock();
+        let idt = &mut (*tls::get_mut()).idt;
+        match *ACTIVE_IO_INTERRUPT_SYSTEM.lock() {
+            Some(Controller::Apic) => {
+                let index = apic::try_find_and_reserve_entry()
+                    .expect("APIC should have interrupt vectors available");
+                idt.apic_interrupts[index as usize] =
+                    idt::Entry::with_handler_and_generic_stack(handler);
+                apic::register_legacy_irq(irq, 128 + index);
+                assert!(legacy_irqs[irq as usize].is_none());
+                legacy_irqs[irq as usize] = Some(IoHandler {
+                    idt_entry: &mut idt.apic_interrupts[index as usize]
+                        as *mut idt::Entry<idt::HandlerFunc>,
+                    entry_index: index,
+                });
+            }
+            None => panic!("map_legacy_irq called with no active interrupt system"),
         }
-        None => panic!("map_legacy_irq called with no active interrupt system"),
     }
 }
 
 pub unsafe fn unmap_legacy_id(irq: u8) {
-    assert!(irq < 16);
-    let mut legacy_irqs = LEGACY_IRQS.lock();
-    match *ACTIVE_IO_INTERRUPT_SYSTEM.lock() {
-        Some(Controller::Apic) => {
-            let irq_info = legacy_irqs[irq as usize].take().unwrap();
-            apic::unregister_legacy_irq(irq);
-            apic::free_entry(irq_info.entry_index);
-            unsafe {
+    unsafe {
+        assert!(irq < 16);
+        let mut legacy_irqs = LEGACY_IRQS.lock();
+        match *ACTIVE_IO_INTERRUPT_SYSTEM.lock() {
+            Some(Controller::Apic) => {
+                let irq_info = legacy_irqs[irq as usize].take().unwrap();
+                apic::unregister_legacy_irq(irq);
+                apic::free_entry(irq_info.entry_index);
                 *irq_info.idt_entry = idt::Entry::missing();
             }
+            None => panic!("map_legacy_irq called with no active interrupt system"),
         }
-        None => panic!("map_legacy_irq called with no active interrupt system"),
     }
 }
 
 pub unsafe fn scoped_map_legacy_irq(irq: u8, handler: idt::HandlerFunc) -> ScopedLegacyIrqMapping {
-    map_legacy_irq(irq, handler);
-    ScopedLegacyIrqMapping(irq)
+    unsafe {
+        map_legacy_irq(irq, handler);
+        ScopedLegacyIrqMapping(irq)
+    }
 }
 
 #[repr(transparent)]
@@ -96,8 +100,8 @@ impl Drop for ScopedLegacyIrqMapping {
 
 pub mod apic {
     use super::{
-        tls, Controller, DeliveryMode, DestinationMode, IoApic, LocalApic, LocalApicRegister, Madt,
-        MadtEntry, Mutex, Polarity, TriggerMode, Vec, ACTIVE_IO_INTERRUPT_SYSTEM,
+        ACTIVE_IO_INTERRUPT_SYSTEM, Controller, DeliveryMode, DestinationMode, IoApic, LocalApic,
+        LocalApicRegister, Madt, MadtEntry, Mutex, Polarity, TriggerMode, Vec, tls,
     };
 
     struct State {
@@ -117,99 +121,103 @@ pub mod apic {
     static STATE: Mutex<Option<State>> = Mutex::new(None);
 
     pub unsafe fn init_from_madt(madt: &Madt) {
-        let mut io_apics = Vec::new();
-        let mut interrupt_source_overrides = Vec::new();
-        log::debug!("MADT found at {madt:p}");
-        log::debug!("Enabling Local APIC at {:#x}", madt.bsp_local_apic_address);
-        let mut bsp_apic = LocalApic::new(madt.bsp_local_apic_address as usize);
-        bsp_apic.enable_bsp_local_apic();
-        log::debug!("Local APIC enabled");
-        (*tls::get_mut()).local_apic.apic = Some(bsp_apic);
-        for entry in madt.entry_iter() {
-            match entry {
-                MadtEntry::IoApic {
-                    io_apic_id,
-                    io_apic_address,
-                    global_system_interrupt_base,
-                } => io_apics.push(IoApic::new(
-                    io_apic_address as usize,
-                    io_apic_id,
-                    global_system_interrupt_base,
-                )),
-                MadtEntry::InterruptSourceOverride {
-                    bus_source,
-                    irq_source,
-                    global_system_interrupt,
-                    flags,
-                } => interrupt_source_overrides.push(InterruptSourceOverride {
-                    _bus_source: bus_source,
-                    irq_source,
-                    global_system_interrupt,
-                    flags,
-                }),
-                _ => {}
+        unsafe {
+            let mut io_apics = Vec::new();
+            let mut interrupt_source_overrides = Vec::new();
+            log::debug!("MADT found at {madt:p}");
+            log::debug!("Enabling Local APIC at {:#x}", madt.bsp_local_apic_address);
+            let mut bsp_apic = LocalApic::new(madt.bsp_local_apic_address as usize);
+            bsp_apic.enable_bsp_local_apic();
+            log::debug!("Local APIC enabled");
+            (*tls::get_mut()).local_apic.apic = Some(bsp_apic);
+            for entry in madt.entry_iter() {
+                match entry {
+                    MadtEntry::IoApic {
+                        io_apic_id,
+                        io_apic_address,
+                        global_system_interrupt_base,
+                    } => io_apics.push(IoApic::new(
+                        io_apic_address as usize,
+                        io_apic_id,
+                        global_system_interrupt_base,
+                    )),
+                    MadtEntry::InterruptSourceOverride {
+                        bus_source,
+                        irq_source,
+                        global_system_interrupt,
+                        flags,
+                    } => interrupt_source_overrides.push(InterruptSourceOverride {
+                        _bus_source: bus_source,
+                        irq_source,
+                        global_system_interrupt,
+                        flags,
+                    }),
+                    _ => {}
+                }
             }
+            ACTIVE_IO_INTERRUPT_SYSTEM.lock().replace(Controller::Apic);
+            *STATE.lock() = Some(State {
+                io_apics,
+                interrupt_source_overrides,
+                interrupt_vector_map: [1 << 63, 0],
+            });
         }
-        ACTIVE_IO_INTERRUPT_SYSTEM.lock().replace(Controller::Apic);
-        *STATE.lock() = Some(State {
-            io_apics,
-            interrupt_source_overrides,
-            interrupt_vector_map: [1 << 63, 0],
-        });
     }
 
-    // TODO Make this return an error instead of panicking
     /// Registers a legacy IRQ to be sent to `interrupt_vector` on the Local APIC
     pub unsafe fn register_legacy_irq(irq: u8, interrupt_vector: u8) {
-        assert!(irq < 16);
-        let mut state_lock = STATE.lock();
-        let state = state_lock.as_mut().unwrap();
-        let mut polarity = Polarity::High;
-        let mut trigger_mode = TriggerMode::EdgeSensitive;
-        let mut irq = irq as u32;
-        if let Some(source_override) = state
-            .interrupt_source_overrides
-            .iter()
-            .find(|source_override| source_override.irq_source as u32 == irq)
-        {
-            polarity = match source_override.flags & 2 != 0 {
-                false => Polarity::High,
-                true => Polarity::Low,
-            };
-            trigger_mode = match source_override.flags & 8 != 0 {
-                false => TriggerMode::EdgeSensitive,
-                true => TriggerMode::LevelSensitive,
-            };
-            assert!(source_override.global_system_interrupt <= 255);
-            irq = source_override.global_system_interrupt;
-        }
-        let local_apic_id = (*tls::get())
-            .local_apic
-            .apic
-            .as_ref()
-            .unwrap()
-            .read_register(LocalApicRegister::LapicId);
-        assert!(local_apic_id < 256);
-        // Set entry in I/O APIC
-        for io_apic in &mut state.io_apics {
-            let start_irq = io_apic.global_system_interrupt_base();
-            let end_irq = start_irq + io_apic.num_redirection_entries() as u32;
-            if start_irq <= irq && irq < end_irq {
-                assert!(irq - start_irq <= 0x3F);
-                let index = (irq - start_irq) as u8;
-                let mut redirect = io_apic.read_redirection_entry(index);
-                redirect.set_interrupt_vector(interrupt_vector);
-                redirect.set_delivery_mode(DeliveryMode::Normal);
-                redirect.set_destination_mode(DestinationMode::Physical);
-                redirect.set_polarity(polarity);
-                redirect.set_trigger_mode(trigger_mode);
-                redirect.set_destination(local_apic_id as u8);
-                redirect.set_masked(false);
-                io_apic.write_redirection_entry(index, redirect);
-                return;
+        unsafe {
+            // TODO: Return errors instead of panicking.
+            assert!(irq < 16);
+            let mut state_lock = STATE.lock();
+            let state = state_lock.as_mut().unwrap();
+            let mut polarity = Polarity::High;
+            let mut trigger_mode = TriggerMode::EdgeSensitive;
+            let mut irq = irq as u32;
+            if let Some(source_override) = state
+                .interrupt_source_overrides
+                .iter()
+                .find(|source_override| source_override.irq_source as u32 == irq)
+            {
+                polarity = match source_override.flags & 2 != 0 {
+                    false => Polarity::High,
+                    true => Polarity::Low,
+                };
+                trigger_mode = match source_override.flags & 8 != 0 {
+                    false => TriggerMode::EdgeSensitive,
+                    true => TriggerMode::LevelSensitive,
+                };
+                assert!(source_override.global_system_interrupt <= 255);
+                irq = source_override.global_system_interrupt;
             }
+            let local_apic_id = (*tls::get())
+                .local_apic
+                .apic
+                .as_ref()
+                .unwrap()
+                .read_register(LocalApicRegister::LapicId);
+            assert!(local_apic_id < 256);
+            // Set entry in I/O APIC
+            for io_apic in &mut state.io_apics {
+                let start_irq = io_apic.global_system_interrupt_base();
+                let end_irq = start_irq + io_apic.num_redirection_entries() as u32;
+                if start_irq <= irq && irq < end_irq {
+                    assert!(irq - start_irq <= 0x3F);
+                    let index = (irq - start_irq) as u8;
+                    let mut redirect = io_apic.read_redirection_entry(index);
+                    redirect.set_interrupt_vector(interrupt_vector);
+                    redirect.set_delivery_mode(DeliveryMode::Normal);
+                    redirect.set_destination_mode(DestinationMode::Physical);
+                    redirect.set_polarity(polarity);
+                    redirect.set_trigger_mode(trigger_mode);
+                    redirect.set_destination(local_apic_id as u8);
+                    redirect.set_masked(false);
+                    io_apic.write_redirection_entry(index, redirect);
+                    return;
+                }
+            }
+            unreachable!();
         }
-        unreachable!();
     }
 
     pub unsafe fn unregister_legacy_irq(irq: u8) {

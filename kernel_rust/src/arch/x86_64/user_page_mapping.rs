@@ -1,5 +1,5 @@
-use super::page_allocation::{self, OwnedPhysicalPage};
-use super::paging::{align_to_page, PageTable, PageTableEntry};
+use super::page_allocation::{self, OwnedPhysicalPage, ReservePageError};
+use super::paging::{PageTable, PageTableEntry, PageTableData, align_to_page};
 use core::mem::transmute;
 use core::task::Poll;
 
@@ -7,26 +7,28 @@ use core::task::Poll;
 pub struct UnmapMemTask {
     current_address: usize,
     pages_left: usize,
+    pages_freed: usize,
 }
 
 impl UnmapMemTask {
     pub fn new(start_address: usize, num_pages: usize) -> Self {
-        UnmapMemTask {
+        Self {
             current_address: start_address,
             pages_left: num_pages,
+            pages_freed: 0,
         }
     }
 
+    /// If this completes, returns the total number of pages freed.
     pub fn run<F>(&mut self, mapper: &mut UserPageMapper, mut should_suspend: F) -> Poll<usize>
     where
         F: FnMut() -> bool,
     {
-        let mut pages_freed = 0;
         loop {
             if should_suspend() {
                 return Poll::Pending;
             }
-            // Calculate how many parent page tables to check for freeing, unmap page
+            // Calculate how many parent page tables to check for freeing.
             let page_address = self.current_address;
             let next_page_address = page_address + 4096;
             let free_table_check_depth = match self.pages_left == 0 {
@@ -40,22 +42,135 @@ impl UnmapMemTask {
                     0
                 }
             };
-            pages_freed += mapper.unmap_page(page_address, free_table_check_depth);
-            // Advance
-            self.current_address += 1;
+            // Unmap the page.
+            self.pages_freed += mapper.unmap_page(page_address, free_table_check_depth);
+            // Advance.
+            self.current_address = next_page_address;
             self.pages_left -= 1;
-            // Check if we're done
             if self.pages_left == 0 {
-                return Poll::Ready(pages_freed);
+                return Poll::Ready(self.pages_freed);
             }
         }
     }
 }
 
+
+#[derive(Debug)]
+pub struct MapMemTask {
+    start_address: usize,
+    current_address: usize,
+    pages_allocated: usize,
+    state: MapMemState,
+}
+
 #[derive(Clone, Copy, Debug)]
+enum MapMemState {
+    Mapping { pages_left: usize, flags: PageTableEntry },
+    FailRewinding { error: MapMemError },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum MapMemError {
+    #[error("out of memory")]
+    OutOfMemory,
+}
+
+impl MapMemTask {
+    pub fn new(start_address: usize, num_pages: usize, flags: crate::vma::SegmentFlags) -> Self {
+        Self {
+            start_address,
+            current_address: start_address,
+            pages_allocated: 0,
+            state: MapMemState::Mapping {
+                pages_left: num_pages,
+                flags: PageTableEntry::from_data(PageTableData {
+                    user_accessable: flags.read,
+                    writable: flags.write,
+                    no_execute: !flags.execute,
+                    ..Default::default()
+                })
+            },
+        }
+    }
+
+    pub fn start_address(&self) -> usize {
+        self.start_address
+    }
+
+    /// If this completes successfully, returns the total number of pages allocated.
+    /// If this fails, it cleans up all intermediate allocated pages.
+    /// Panics if the task encounters a user page already mapped within the range.
+    pub fn run<F>(&mut self, mapper: &mut UserPageMapper, mut should_suspend: F) -> Poll<Result<usize, MapMemError>>
+    where
+        F: FnMut() -> bool,
+    {
+        loop {
+            if should_suspend() {
+                return Poll::Pending;
+            }
+            match &mut self.state {
+                MapMemState::Mapping { pages_left, flags } => {
+                    // Calculate how many parent page tables to check for freeing, unmap page
+                    let page_address = self.current_address;
+                    let next_page_address = page_address + 4096;
+                    match mapper.map_blank_page(
+                        page_address,
+                        *flags,
+                        &mut self.pages_allocated,
+                    ) {
+                        Ok(()) => {}
+                        Err(UserPageMapperError::OutOfMemory) => {
+                            self.current_address = page_address.saturating_sub(4096);
+                            self.state = MapMemState::FailRewinding {
+                                error: MapMemError::OutOfMemory,
+                            };
+                            continue;
+                        }
+                        Err(err @ UserPageMapperError::PageAlreadyExists) => {
+                            panic!("MapMemTask error - {err}");
+                        }
+                    }
+                    // Advance.
+                    self.current_address = next_page_address;
+                    *pages_left -= 1;
+                    if *pages_left == 0 {
+                        return Poll::Ready(Ok(self.pages_allocated));
+                    }
+                }
+                MapMemState::FailRewinding { error } => {
+                    // Calculate how many parent page tables to check for freeing.
+                    let page_address = self.current_address;
+                    let next_page_address = page_address.saturating_sub(4096);
+                    let free_table_check_depth = match page_address == self.start_address {
+                        true => 3,
+                        false => 'blk: {
+                            for (i, level_mask) in UserPageMapper::LEVEL_MASKS.iter().enumerate() {
+                                if page_address & level_mask != next_page_address & level_mask {
+                                    break 'blk 4 - i;
+                                }
+                            }
+                            0
+                        }
+                    };
+                    // Unmap the page.
+                    self.pages_allocated -= mapper.unmap_page(page_address, free_table_check_depth);
+                    // Advance.
+                    self.current_address = next_page_address;
+                    if page_address == self.start_address {
+                        debug_assert_eq!(self.pages_allocated, 0);
+                        return Poll::Ready(Err(*error));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum UserPageMapperError {
+    #[error("user page already exists")]
     PageAlreadyExists,
-    ExhaustedPagesLeft,
+    #[error("out of memory")]
     OutOfMemory,
 }
 
@@ -71,7 +186,7 @@ impl UserPageMapper {
         0x0000_001F_F000,
     ];
 
-    pub fn new() -> Result<Self, ()> {
+    pub fn new() -> Result<Self, ReservePageError> {
         // Create new PML4
         let mut pml4 = page_allocation::find_and_reserve_page()?;
         let pml4_table = unsafe { transmute::<&mut [u8; 4096], &mut PageTable>(&mut pml4) };
@@ -86,17 +201,13 @@ impl UserPageMapper {
 
     /// Maps a new page to virtual memory at `virtual_address` aligned down to the nearest
     /// page, including any required parent pages. Page will be zeroed out. Generated parent pages
-    /// are set to read/write/execute. Child page flags will be set to `flags`. `pages_left`, if
-    /// provided, will be decremented every time a page is allocated. If `pages_left` runs out of
-    /// pages, all allocated parent pages will be freed and
-    /// `UserPageMapperError::ExhaustedPagesLeft`
-    /// will be returned. Does not do any page invalidation, so the address space must not be in
-    /// use.
+    /// are set to read/write/execute. Child page flags will be set to `flags`.
+    /// Does not do any page invalidation, so the address space must not be in use.
     pub fn map_blank_page(
         &mut self,
         virtual_address: usize,
         flags: PageTableEntry,
-        pages_left: &mut Option<&mut u64>,
+        pages_used: &mut usize,
     ) -> Result<(), UserPageMapperError> {
         const PARENT_FLAGS: PageTableEntry = PageTableEntry::READ_WRITE_EXECUTE;
         let child_flags = (flags.0 & 0x8000_0000_0000_0007) | 5;
@@ -110,16 +221,11 @@ impl UserPageMapper {
                 let entry = unsafe { &mut (&mut *current_table)[index] };
                 // Allocate page if required
                 if !entry.present() {
-                    if let Some(pages_left) = pages_left {
-                        if **pages_left == 0 {
-                            break 'blk Err(UserPageMapperError::ExhaustedPagesLeft);
-                        }
-                        **pages_left -= 1;
-                    }
+                    *pages_used += 1;
                     // Allocate and zero out page
                     let new_page = match page_allocation::find_and_reserve_page() {
                         Ok(page) => page.into_raw(),
-                        Err(()) => break 'blk Err(UserPageMapperError::OutOfMemory),
+                        Err(ReservePageError) => break 'blk Err(UserPageMapperError::OutOfMemory),
                     };
                     unsafe { (&mut *new_page).fill(0) };
                     // If parent page, add to cleanup list
@@ -145,17 +251,17 @@ impl UserPageMapper {
         if result.is_err() {
             for page in parent_pages_created.iter().filter_map(|x| *x) {
                 page_allocation::free_page(page);
-                if let Some(pages_left) = pages_left {
-                    **pages_left += 1;
-                }
+                *pages_used -= 1;
             }
         }
         result
     }
 
-    /// Unmaps and frees a page at `virtual_address` aligned down to the nearest page. Also checks
-    /// `free_table_check_depth` (up to 4) number of parent page tables for if they're empty and
-    /// able to be freed. Returns the number of pages freed.
+    /// Unmaps and frees a page at `virtual_address` aligned down to the nearest page.
+    /// Also checks `free_table_check_depth` (up to 4) number of parent page tables for if they're
+    /// empty and able to be freed.
+    /// Returns the number of pages freed.
+    #[must_use]
     pub fn unmap_page(&mut self, virtual_address: usize, free_table_check_depth: usize) -> usize {
         let virtual_address = virtual_address & 0x000FFFFFFFFFF000;
         // Collect table addresses as we go down
@@ -176,13 +282,16 @@ impl UserPageMapper {
         // Work backwards from PT for up to `free_table_check_depth` number of tables. If table is
         // empty, free page and check next table.
         // We always free the child entry to unmap the actual target page.
-        let mut tables_checked = 0;
         let mut pages_freed = 0;
-        for (prev_table_index, table_addr) in table_addresses.iter().copied().rev() {
+        for (tables_checked, (prev_table_index, table_addr)) in table_addresses.iter().copied().rev().enumerate() {
             let table = unsafe { &mut *(table_addr as *mut PageTable) };
             // Previous table was empty, free it and clear entry
-            page_allocation::free_page(table[prev_table_index].address());
+            let page_address = table[prev_table_index].address();
             table[prev_table_index] = PageTableEntry::ZERO;
+            // TODO: For multicore, we need to send an IPI to any other cores running threads in
+            // this process to tell them to invalidate the page. This needs to happen after zeroing
+            // out the entry, but before freeing the page.
+            page_allocation::free_page(page_address);
             pages_freed += 1;
             if tables_checked >= free_table_check_depth {
                 break;
@@ -193,7 +302,6 @@ impl UserPageMapper {
                     break;
                 }
             }
-            tables_checked += 1;
         }
         pages_freed
     }
@@ -207,7 +315,7 @@ impl UserPageMapper {
         virtual_start_address: usize,
         size: usize,
         buffer: &[u8],
-    ) -> Result<(), ()> {
+    ) -> Result<(), ReservePageError> {
         const PARENT_FLAGS: PageTableEntry = PageTableEntry::READ_WRITE_EXECUTE;
         const CHILD_FLAGS: PageTableEntry = PageTableEntry::READ;
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
@@ -265,9 +373,9 @@ impl UserPageMapper {
         Ok(())
     }
 
-    // TODO Cleanup parent page table pages, keep number of used pages somewhere in page table?
     /// Unmaps and frees `(size / 4096) + 1` pages starting at the given linear address.
     pub fn unmap_mem(&mut self, start_address: usize, size: usize) {
+        // TODO: Cleanup parent page table pages, keep number of used pages somewhere in page table?
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
         let actual_start_address = start_address & 0x000FFFFFFFFFF000;
         let num_pages = {
@@ -298,10 +406,10 @@ impl UserPageMapper {
         }
     }
 
-    // TODO Optimize by keeping count of number of pages done, stay at deepest level
     /// Sets the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Relaxes permissions for parent pages where necessary.
     pub fn change_flags(&mut self, start_address: usize, size: usize, flags: PageTableEntry) {
+        // TODO: Optimize by keeping count of number of pages done, stay at deepest level.
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
         let actual_start_address = start_address & 0x000FFFFFFFFFF000;
         let actual_flags = (flags.0 & 0x80000000000001FE) | 1;
@@ -331,7 +439,6 @@ impl UserPageMapper {
         }
     }
 
-    // TODO Optimize by keeping count of number of pages done, stay at deepest level
     /// Relaxes the flags of `(size / 4096) + 1` child pages starting at the given linear address.
     /// Also relaxes permissions for parent pages where necessary.
     pub fn change_flags_relaxing(
@@ -340,6 +447,7 @@ impl UserPageMapper {
         size: usize,
         flags: PageTableEntry,
     ) {
+        // TODO: Optimize by keeping count of number of pages done, stay at deepest level.
         let pml4_address = self.pml4.as_mut() as *mut [u8; 4096] as usize;
         let actual_start_address = start_address & 0x000FFFFFFFFFF000;
         let relaxation_flags = (flags.0 & 0x6) | 1;
@@ -375,23 +483,25 @@ impl UserPageMapper {
         }
     }
 
-    unsafe fn free_page_tree(&mut self, node: PageTableEntry, level: usize) {
-        if !node.present() {
-            return;
-        }
-        // TODO Add huge page support
-        if node.huge_page() {
-            todo!()
-        }
-        if level < 3 {
-            let page_table = &mut *(node.address() as *mut PageTable);
-            for entry in page_table {
-                if entry.present() {
-                    self.free_page_tree(*entry, level + 1);
+    unsafe fn free_page_tree(node: PageTableEntry, level: usize) {
+        unsafe {
+            if !node.present() {
+                return;
+            }
+            // TODO: Add huge page support.
+            if node.huge_page() {
+                todo!("huge page support")
+            }
+            if level < 3 {
+                let page_table = &mut *(node.address() as *mut PageTable);
+                for entry in page_table {
+                    if entry.present() {
+                        Self::free_page_tree(*entry, level + 1);
+                    }
                 }
             }
+            page_allocation::free_page(node.address());
         }
-        page_allocation::free_page(node.address());
     }
 }
 
@@ -401,7 +511,7 @@ impl Drop for UserPageMapper {
             let node = transmute::<&[u8; 4096], &PageTable>(&self.pml4);
             for entry in &node[0..256] {
                 if entry.present() {
-                    self.free_page_tree(*entry, 0);
+                    Self::free_page_tree(*entry, 0);
                 }
             }
         }

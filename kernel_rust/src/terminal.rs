@@ -21,14 +21,23 @@ pub mod psf {
         pub width: u32,
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+    pub enum HeaderParseError {
+        #[error("invalid magic")]
+        InvalidMagic,
+        #[error("unknown version")]
+        UnknownVersion
+    }
+
     impl Header {
-        /// Parses a PSF header from bytes, returns `Err(())` if the magic or version does not
-        /// match.
-        pub fn from_bytes(bytes: [u8; size_of::<Header>()]) -> Result<Self, ()> {
+        pub fn from_bytes(bytes: [u8; size_of::<Header>()]) -> Result<Self, HeaderParseError> {
             let magic = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             let version = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-            if magic != MAGIC || version != VERSION {
-                return Err(());
+            if magic != MAGIC {
+                return Err(HeaderParseError::InvalidMagic);
+            }
+            if version != VERSION {
+                return Err(HeaderParseError::UnknownVersion);
             }
             Ok(Self {
                 magic,
@@ -75,7 +84,7 @@ pub mod psf {
             if end_pos >= self.font_data.len() {
                 return &[];
             }
-            return &self.font_data[start_pos..end_pos];
+            &self.font_data[start_pos..end_pos]
         }
     }
 }

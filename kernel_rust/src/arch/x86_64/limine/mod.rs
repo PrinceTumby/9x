@@ -42,6 +42,7 @@ pub mod requests {
             unsafe impl Sync for $name {}
 
             impl $name {
+                #[allow(clippy::new_without_default)]
                 pub const fn new() -> Self {
                     Self {
                         common_id_magic: COMMON_ID_MAGIC,
@@ -107,8 +108,10 @@ pub mod responses {
     }
 
     impl Framebuffer {
-        pub unsafe fn get_framebuffers<'a>(&'a self) -> &'a [&'static super::Framebuffer] {
-            core::slice::from_raw_parts(self.framebuffers, self.num_framebuffers as usize)
+        pub unsafe fn get_framebuffers(&self) -> &[&'static super::Framebuffer] {
+            unsafe {
+                core::slice::from_raw_parts(self.framebuffers, self.num_framebuffers as usize)
+            }
         }
     }
 
@@ -120,8 +123,8 @@ pub mod responses {
     }
 
     impl MemoryMap {
-        pub unsafe fn get_entries<'a>(&'a self) -> &'a [&'static super::MemoryMapEntry] {
-            core::slice::from_raw_parts(self.entries, self.num_entries as usize)
+        pub unsafe fn get_entries(&self) -> &[&'static super::MemoryMapEntry] {
+            unsafe { core::slice::from_raw_parts(self.entries, self.num_entries as usize) }
         }
     }
 

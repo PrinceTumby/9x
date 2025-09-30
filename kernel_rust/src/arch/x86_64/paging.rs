@@ -5,7 +5,7 @@ pub const PAGE_SIZE: usize = 4096;
 /// Aligns `address` down to the nearest page boundary.
 #[inline]
 pub fn align_to_page(address: usize) -> usize {
-    return address & !0xFFF;
+    address & !0xFFF
 }
 
 pub type PageTable = [PageTableEntry; 512];

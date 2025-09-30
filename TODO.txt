@@ -1,3 +1,5 @@
+[2025/08/03] For bookkeeping, add dates whenever an item is added please!
+
 Big ideas:
 - Allow processes to give each other time? Main motivation is the potential of services being overwhelmed, could
   instead make it so services have a limited amount of time they spend fairly between requests, requesting programs
@@ -42,19 +44,25 @@ Virtual Memory Allocation:
 - Currently force mapping unmaps all the old pages, then maps all the new pages. This could probably be faster if we
   just changed the page flags.
 - Maybe add immutable segment mappings for unusable areas?
+- [2025/08/03] We should optimize large allocations using tiered physical memory bitmaps. Base tier is 4k pages, as it
+  is now, and subsequent tiers can be some power of two multiple larger. Maybe 16 or 32 for 4k pages? Then we can
+  search in 32-bit chunks. Higher tier bits are set whenever that group is at least partially used. Programs should
+  also be able to specify that they want contiguous physical memory, and then we just do block search on the highest
+  tier possible, maybe requiring the base address to be suitably aligned.
+  
 
 Process threading:
 - VMA system currently creates and removes mappings in a very non-atomic fashion. Figure out some locking scheme for
   this that allows other threads to continue doing tasks (preferably able to map memory too):
-    - (First idea) Invalidate upper level page table entry, mark as being modified (integrate in UnmapMemTask).
-    - (Better idea) Remove segment first, unmap pages after so that page faults (shouldn't happen anyway) don't result
-      in pages being remapped in the segment.
-      Keep a list of new segments being added, so threads don't try to map in the same area at the same time.
+  - (First idea) Invalidate upper level page table entry, mark as being modified (integrate in UnmapMemTask).
+  - (Better idea) Remove segment first, unmap pages after so that page faults (shouldn't happen anyway) don't result
+    in pages being remapped in the segment.
+    Keep a list of new segments being added, so threads don't try to map in the same area at the same time.
 - OOM conditions when overwriting mappings are currently unrecoverable. Figure out some plan for this.
-    - (Option 1) Just unmap the whole overwritten area and return error state.
-    - (Option 2) Somehow make the process reversible (probably needs a lot more memory).
-    - (Option 3) Precalculate the memory usage difference the operation will incur, so we know if an OOM will occur
-      before we start (ideal, but more difficult).
+  - (Option 1) Just unmap the whole overwritten area and return error state.
+  - (Option 2) Somehow make the process reversible (probably needs a lot more memory).
+  - (Option 3) Precalculate the memory usage difference the operation will incur, so we know if an OOM will occur
+    before we start (ideal, but more difficult).
 
 Old:
 - Change 'out' folders to 'zig-out'

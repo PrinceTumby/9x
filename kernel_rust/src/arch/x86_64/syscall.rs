@@ -1,7 +1,7 @@
 use define_asm_symbol::export_asm_all;
 
-extern "C" {
-    pub fn syscall_entrypoint();
+unsafe extern "C" {
+    pub unsafe fn syscall_entrypoint();
 }
 
 #[derive(Clone, Copy)]

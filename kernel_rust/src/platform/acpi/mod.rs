@@ -1,8 +1,6 @@
 mod acpica_os_layer;
 mod acpica_sys;
 
-use core::mem::MaybeUninit;
-
 #[derive(Clone, Copy, Debug)]
 pub struct AcpiError {
     pub code: AcpiErrorCode,
@@ -53,7 +51,7 @@ pub unsafe fn init_subsystem(acpi_ptr: Option<core::ptr::NonNull<()>>) -> Result
 }
 
 pub mod table {
-    use super::{acpica_sys, AcpiError, MaybeUninit};
+    use super::*;
 
     /// Must only be called once, after `acpi::init_subsystem`.
     pub unsafe fn init_manager() -> Result<(), AcpiError> {
@@ -61,13 +59,15 @@ pub mod table {
     }
 
     pub unsafe fn get<T: Table>() -> Result<&'static T, AcpiError> {
-        let mut table: MaybeUninit<*const ()> = MaybeUninit::uninit();
-        <Result<(), AcpiError>>::from(acpica_sys::table_manager::get_table(
-            &T::SIGNATURE,
-            1,
-            &mut table,
-        ))?;
-        Ok(&*(table.assume_init() as *const T))
+        unsafe {
+            let mut table: *const () = core::ptr::null();
+            <Result<(), AcpiError>>::from(acpica_sys::table_manager::get_table(
+                &T::SIGNATURE,
+                1,
+                &mut table,
+            ))?;
+            Ok(&*(table as *const T))
+        }
     }
 
     pub trait Table {
@@ -95,9 +95,11 @@ pub mod table {
 
     impl Madt {
         pub unsafe fn entry_iter(&self) -> MadtEntryIterator {
-            MadtEntryIterator {
-                current_header: (self as *const Self).offset(1) as *const MadtEntryHeader,
-                end_address: (self as *const Self as usize) + self.length as usize - 1,
+            unsafe {
+                MadtEntryIterator {
+                    current_header: (self as *const Self).offset(1) as *const MadtEntryHeader,
+                    end_address: (self as *const Self as usize) + self.length as usize - 1,
+                }
             }
         }
     }
@@ -197,7 +199,7 @@ pub mod table {
                 // Skip over unknown entry types
                 unknown => {
                     log::debug!("Unknown MADT entry type: {unknown:?}");
-                    return self.next();
+                    self.next()
                 }
             }
         }

@@ -30,15 +30,17 @@ pub struct InterruptStacks {
 unsafe impl Sync for InterruptStacks {}
 
 #[repr(C, align(16))]
-pub struct Stack([u8; 4096]);
+pub struct Stack([u8; Self::SIZE]);
 
 impl Stack {
+    pub const SIZE: usize = 4096;
+
     pub const fn empty() -> Self {
-        Self([0; 4096])
+        Self([0; Self::SIZE])
     }
 
     pub const fn get_end_address(ptr: *const Self) -> *const u8 {
-        unsafe { (ptr as *const u8).wrapping_add((*ptr).0.len() & !0xF) }
+        (ptr as *const u8).wrapping_add(Self::SIZE & !0xF)
     }
 }
 
@@ -62,10 +64,12 @@ pub static KERNEL_TSS: KernelTss = KernelTss {
         generic: Stack::get_end_address(&raw const stacks::GENERIC),
         double_fault: Stack::get_end_address(&raw const stacks::DOUBLE_FAULT),
         page_fault: Stack::get_end_address(&raw const stacks::PAGE_FAULT),
-        general_protection_fault: Stack::get_end_address(&raw const stacks::GENERAL_PROTECTION_FAULT),
+        general_protection_fault: Stack::get_end_address(
+            &raw const stacks::GENERAL_PROTECTION_FAULT,
+        ),
         _unused: [0; 3],
     },
-    iopb_base: memoffset::offset_of!(KernelTss, iopb) as u16,
+    iopb_base: core::mem::offset_of!(KernelTss, iopb) as u16,
     iopb: IoPermissionBitmap([0xFF; 8192]),
     _reserved_1: 0,
     _reserved_2: 0,

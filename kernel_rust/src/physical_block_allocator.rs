@@ -25,7 +25,9 @@ unsafe impl Allocator for PhysicalBlockAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
-        drop(OwnedPhysicalPage::from_raw(ptr.as_ptr() as *mut RawPage));
+        unsafe {
+            drop(OwnedPhysicalPage::from_raw(ptr.as_ptr() as *mut RawPage));
+        }
     }
 }
 

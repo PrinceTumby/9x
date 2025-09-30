@@ -26,7 +26,6 @@ pub mod platform {
 
 // Common functionality
 
-#[macro_export]
 macro_rules! define_asm_symbol {
     ($name:expr, $value:expr $(,)?) => {
         core::arch::global_asm!(
@@ -35,6 +34,8 @@ macro_rules! define_asm_symbol {
         );
     };
 }
+
+pub use define_asm_symbol;
 
 #[repr(C, align(8))]
 struct DescriptorTablePointer([u8; 10]);
@@ -80,8 +81,10 @@ pub mod debug_output {
     /// Attempts to initialise and enable each writer in turn. Writers failing to initalise do not
     /// impact initialisation of other writers.
     pub unsafe fn init_writers() {
-        if bochs_debug::BochsWriter::test_port_exists() {
-            BOCHS_WRITER_ENABLED = true;
+        unsafe {
+            if bochs_debug::BochsWriter::test_port_exists() {
+                BOCHS_WRITER_ENABLED = true;
+            }
         }
     }
 
@@ -116,31 +119,35 @@ pub mod msr {
     /// Reads a value from the given MSR.
     #[inline]
     pub unsafe fn read(index: u32) -> u64 {
-        let value;
-        core::arch::asm!(
-            "rdmsr",
-            "shl rdx, 32",
-            "or rdx, rax",
-            in("ecx") index,
-            out("rdx") value,
-            out("eax") _,
-            options(nomem, preserves_flags),
-        );
-        value
+        unsafe {
+            let value;
+            core::arch::asm!(
+                "rdmsr",
+                "shl rdx, 32",
+                "or rdx, rax",
+                in("ecx") index,
+                out("rdx") value,
+                out("eax") _,
+                options(nomem, preserves_flags),
+            );
+            value
+        }
     }
 
     /// Writes a value to the given MSR.
     #[inline]
     pub unsafe fn write(index: u32, value: u64) {
-        core::arch::asm!(
-            "rdmsr",
-            "shl rdx, 32",
-            "or rdx, rax",
-            in("ecx") index,
-            in("eax") value as u32,
-            in("edx") (value >> 32) as u32,
-            options(nomem, preserves_flags),
-        );
+        unsafe {
+            core::arch::asm!(
+                "rdmsr",
+                "shl rdx, 32",
+                "or rdx, rax",
+                in("ecx") index,
+                in("eax") value as u32,
+                in("edx") (value >> 32) as u32,
+                options(nomem, preserves_flags),
+            );
+        }
     }
 
     // Standard MSRs
@@ -158,25 +165,29 @@ pub mod port {
     /// Reads a byte from the given x86 port number.
     #[inline(always)]
     pub unsafe fn read_byte(port: u16) -> u8 {
-        let mut byte: u8;
-        core::arch::asm!(
-            "in al, dx",
-            in("dx") port,
-            lateout("al") byte,
-            options(nomem, preserves_flags),
-        );
-        byte
+        unsafe {
+            let mut byte: u8;
+            core::arch::asm!(
+                "in al, dx",
+                in("dx") port,
+                lateout("al") byte,
+                options(nomem, preserves_flags),
+            );
+            byte
+        }
     }
 
     /// Writes a byte to the given x86 port number.
     #[inline(always)]
     pub unsafe fn write_byte(port: u16, byte: u8) {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") port,
-            in("al") byte,
-            options(nomem, preserves_flags),
-        );
+        unsafe {
+            core::arch::asm!(
+                "out dx, al",
+                in("dx") port,
+                in("al") byte,
+                options(nomem, preserves_flags),
+            );
+        }
     }
 
     // Standard ports
@@ -261,43 +272,37 @@ pub fn init_stage_1(_args: &kernel_args::Args) {
 }
 
 pub unsafe fn init_stage_2(args: &kernel_args::Args) {
-    use platform::acpi;
-    // Initialise ACPI subsystem (ACPICA currently)
-    acpi::init_subsystem(args.arch_ptrs.acpi_ptr).unwrap();
-    log::debug!("Initialised ACPI subsystem");
-    acpi::table::init_manager().expect("initialising ACPI tables failed");
-    log::debug!("Initialised ACPI tables");
-    // Initialise interrupts
-    let madt = acpi::table::get::<acpi::table::Madt>().unwrap();
-    log::debug!(
-        "MADT at {madt:p}: Madt {{ bsp_local_apic_address: {:#x}, flags: {:#X} }}",
-        madt.bsp_local_apic_address,
-        madt.flags,
-    );
-    for entry in madt.entry_iter() {
-        log::debug!("MADT entry - {entry:#X?}");
+    unsafe {
+        use platform::acpi;
+        // Initialise ACPI subsystem (ACPICA currently)
+        acpi::init_subsystem(args.arch_ptrs.acpi_ptr).unwrap();
+        log::debug!("Initialised ACPI subsystem");
+        acpi::table::init_manager().expect("initialising ACPI tables failed");
+        log::debug!("Initialised ACPI tables");
+        // Initialise interrupts
+        let madt = acpi::table::get::<acpi::table::Madt>().unwrap();
+        log::debug!(
+            "MADT at {madt:p}: Madt {{ bsp_local_apic_address: {:#x}, flags: {:#X} }}",
+            madt.bsp_local_apic_address,
+            madt.flags,
+        );
+        for entry in madt.entry_iter() {
+            log::debug!("MADT entry - {entry:#X?}");
+        }
+        interrupts::apic::init_from_madt(madt);
+        log::debug!("Initialised APIC from MADT");
+        // Setup APIC Timer
+        {
+            use clock::{CALIBRATION_TIMERS, TIMERS};
+            clock::MANAGER
+                .lock()
+                .update_clock_functions(&CALIBRATION_TIMERS.lock(), &TIMERS.lock());
+            clock::apic::calibrate();
+            clock::apic::setup();
+            clock::MANAGER
+                .lock()
+                .update_clock_functions(&CALIBRATION_TIMERS.lock(), &TIMERS.lock());
+            log::debug!("Initialised Local APIC Timer");
+        }
     }
-    interrupts::apic::init_from_madt(madt);
-    log::debug!("Initialised APIC from MADT");
-    // Setup APIC Timer
-    {
-        use clock::{CALIBRATION_TIMERS, TIMERS};
-        clock::MANAGER
-            .lock()
-            .update_clock_functions(&CALIBRATION_TIMERS.lock(), &TIMERS.lock());
-        clock::apic::calibrate();
-        clock::apic::setup();
-        clock::MANAGER
-            .lock()
-            .update_clock_functions(&CALIBRATION_TIMERS.lock(), &TIMERS.lock());
-        log::debug!("Initialised Local APIC Timer");
-    }
-    // {
-    //     // DEBUG
-    //     (clock::MANAGER.lock().timer.set_interrupt_type)(&clock::InterruptType::Sleep);
-    //     for i in 0..=10 {
-    //         log::debug!("{i}");
-    //         (clock::MANAGER.lock().timer.sleep_ms)(1000);
-    //     }
-    // }
 }

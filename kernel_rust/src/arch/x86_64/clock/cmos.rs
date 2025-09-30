@@ -22,57 +22,63 @@ pub static CMOS: Mutex<Cmos> = Mutex::new(Cmos);
 
 impl Cmos {
     pub unsafe fn read_byte(&self, disable_nmi: bool, register: u8) -> u8 {
-        let nmi_bit = (disable_nmi as u8) << 7;
-        port::write_byte(port::CMOS_NMI_AND_REGISTER, register | nmi_bit);
-        port::read_byte(port::CMOS_DATA)
+        unsafe {
+            let nmi_bit = (disable_nmi as u8) << 7;
+            port::write_byte(port::CMOS_NMI_AND_REGISTER, register | nmi_bit);
+            port::read_byte(port::CMOS_DATA)
+        }
     }
 
     pub unsafe fn write_byte(&self, disable_nmi: bool, register: u8, byte: u8) {
-        let nmi_bit = (disable_nmi as u8) << 7;
-        port::write_byte(port::CMOS_NMI_AND_REGISTER, register | nmi_bit);
-        port::write_byte(port::CMOS_DATA, byte);
+        unsafe {
+            let nmi_bit = (disable_nmi as u8) << 7;
+            port::write_byte(port::CMOS_NMI_AND_REGISTER, register | nmi_bit);
+            port::write_byte(port::CMOS_DATA, byte);
+        }
     }
 }
 
 pub const CALIBRATION_TIMER: CalibrationTimer = CalibrationTimer { calibration_sleep };
 
 unsafe fn calibration_sleep(start_timer: &mut dyn FnMut()) -> u32 {
-    let _cmos = CMOS.lock();
-    // Wait until next second has just started
-    asm!(
-        "2:",
-        "mov al, 0xA",
-        "out 0x70, al",
-        "in al, 0x71",
-        "test al, 0x80",
-        "jz 2b",
-        "3:",
-        "mov al, 0xA",
-        "out 0x70, al",
-        "in al, 0x71",
-        "test al, 0x80",
-        "jnz 3b",
-        out("al") _,
-        options(nomem, nostack),
-    );
-    // Run measurement function
-    start_timer();
-    // Wait until current second has ended
-    asm!(
-        "2:",
-        "mov al, 0xA",
-        "out 0x70, al",
-        "in al, 0x71",
-        "test al, 0x80",
-        "jz 2b",
-        "3:",
-        "mov al, 0xA",
-        "out 0x70, al",
-        "in al, 0x71",
-        "test al, 0x80",
-        "jnz 3b",
-        out("al") _,
-        options(nomem, nostack),
-    );
-    1_000_000
+    unsafe {
+        let _cmos = CMOS.lock();
+        // Wait until next second has just started
+        asm!(
+            "2:",
+            "mov al, 0xA",
+            "out 0x70, al",
+            "in al, 0x71",
+            "test al, 0x80",
+            "jz 2b",
+            "3:",
+            "mov al, 0xA",
+            "out 0x70, al",
+            "in al, 0x71",
+            "test al, 0x80",
+            "jnz 3b",
+            out("al") _,
+            options(nomem, nostack),
+        );
+        // Run measurement function
+        start_timer();
+        // Wait until current second has ended
+        asm!(
+            "2:",
+            "mov al, 0xA",
+            "out 0x70, al",
+            "in al, 0x71",
+            "test al, 0x80",
+            "jz 2b",
+            "3:",
+            "mov al, 0xA",
+            "out 0x70, al",
+            "in al, 0x71",
+            "test al, 0x80",
+            "jnz 3b",
+            out("al") _,
+            options(nomem, nostack),
+        );
+        1_000_000
+    }
 }

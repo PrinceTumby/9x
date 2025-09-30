@@ -7,9 +7,11 @@ use spin::Mutex;
 /// Initialises the global logger wrapper. Can be called multiple times. This is not thread safe,
 /// refer to the safety constraints of `log::set_logger_racy` for more details.
 pub unsafe fn init_wrapper() {
-    if !LOG_WRAPPER_INITIALISED {
-        LOG_WRAPPER_INITIALISED = true;
-        _ = log::set_logger_racy(&LOG_WRAPPER).map(|()| log::set_max_level(LevelFilter::Trace));
+    unsafe {
+        if !LOG_WRAPPER_INITIALISED {
+            LOG_WRAPPER_INITIALISED = true;
+            _ = log::set_logger_racy(&LOG_WRAPPER).map(|()| log::set_max_level(LevelFilter::Trace));
+        }
     }
 }
 

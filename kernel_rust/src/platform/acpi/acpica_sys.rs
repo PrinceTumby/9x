@@ -1,5 +1,3 @@
-use core::mem::MaybeUninit;
-
 bitfield::bitfield! {
     #[repr(transparent)]
     pub struct Status(u32);
@@ -58,29 +56,29 @@ impl From<Boolean> for bool {
 pub mod subsystem {
     use super::Status;
 
-    extern "C" {
+    unsafe extern "C" {
         #[link_name = "AcpiInitializeSubsystem"]
-        pub fn initialise() -> Status;
+        pub unsafe fn initialise() -> Status;
     }
 }
 
 pub mod table_manager {
-    use super::{Boolean, MaybeUninit, Status};
+    use super::*;
 
-    extern "C" {
+    unsafe extern "C" {
         #[link_name = "AcpiInitializeTables"]
-        pub fn initialise(
+        pub unsafe fn initialise(
             table_array: Option<&u32>,
             table_count: u32,
             allow_resize: Boolean,
         ) -> Status;
 
         #[link_name = "AcpiGetTable"]
-        pub fn get_table(
+        pub unsafe fn get_table(
             signature: &[u8; 4],
             // One-based
             instance: u32,
-            out_table: &mut MaybeUninit<*const ()>,
+            out_table: &mut *const (),
         ) -> Status;
     }
 }

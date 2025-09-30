@@ -1,6 +1,6 @@
+use super::DescriptorTablePointer;
 use super::gdt;
 use super::tss;
-use super::DescriptorTablePointer;
 use core::arch::{asm, global_asm};
 
 global_asm!(include_str!("exceptions.s"), options(raw, att_syntax));
@@ -94,7 +94,7 @@ impl<F: IdtHandler> Entry<F> {
         let handler_address = handler.get_address();
         Self {
             ptr_low: handler_address as u16,
-            gdt_selector: memoffset::offset_of!(gdt::KernelGdt, kernel_code) as u16,
+            gdt_selector: core::mem::offset_of!(gdt::KernelGdt, kernel_code) as u16,
             options: EntryOptions::present_minimal(),
             ptr_middle: (handler_address >> 16) as u16,
             ptr_high: (handler_address >> 32) as u32,
@@ -109,7 +109,7 @@ impl<F: IdtHandler> Entry<F> {
         let handler_address = handler.get_address();
         Self {
             ptr_low: handler_address as u16,
-            gdt_selector: memoffset::offset_of!(gdt::KernelGdt, kernel_code) as u16,
+            gdt_selector: core::mem::offset_of!(gdt::KernelGdt, kernel_code) as u16,
             options: EntryOptions::present_with_stack_index(tss_index),
             ptr_middle: (handler_address >> 16) as u16,
             ptr_high: (handler_address >> 32) as u32,
@@ -123,7 +123,7 @@ impl<F: IdtHandler> Entry<F> {
     pub fn with_handler_and_generic_stack(handler: F) -> Self {
         Self::with_handler_and_stack(
             handler,
-            (memoffset::offset_of!(tss::InterruptStacks, generic) / 8) as u8,
+            (core::mem::offset_of!(tss::InterruptStacks, generic) / 8) as u8,
         )
     }
 }
@@ -199,8 +199,9 @@ pub struct InterruptDescriptorTable {
     pub apic_interrupts: [Entry<HandlerFunc>; 256 - 128],
 }
 
-// TODO Make `limine_entry` map the limine stack into a standard higher half location.
+// TODO: Make `limine_entry` map the limine stack into a standard higher half location.
 impl InterruptDescriptorTable {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         use exception_handlers as handlers;
         let apic_interrupts = [Entry::missing(); 256 - 128];
@@ -222,7 +223,7 @@ impl InterruptDescriptorTable {
             ),
             double_fault: Entry::with_handler_and_stack(
                 handlers::double_fault,
-                (memoffset::offset_of!(tss::InterruptStacks, double_fault) / 8) as u8,
+                (core::mem::offset_of!(tss::InterruptStacks, double_fault) / 8) as u8,
             ),
             coprocessor_segment_overrun: Entry::missing(),
             invalid_tss: Entry::with_handler_and_generic_stack(handlers::invalid_tss),
@@ -234,11 +235,11 @@ impl InterruptDescriptorTable {
             ),
             general_protection_fault: Entry::with_handler_and_stack(
                 handlers::general_protection_fault,
-                (memoffset::offset_of!(tss::InterruptStacks, general_protection_fault) / 8) as u8,
+                (core::mem::offset_of!(tss::InterruptStacks, general_protection_fault) / 8) as u8,
             ),
             page_fault: Entry::with_handler_and_stack(
                 handlers::page_fault,
-                (memoffset::offset_of!(tss::InterruptStacks, page_fault) / 8) as u8,
+                (core::mem::offset_of!(tss::InterruptStacks, page_fault) / 8) as u8,
             ),
             reserved_1: Entry::missing(),
             x87_floating_point: Entry::with_handler_and_generic_stack(handlers::x87_floating_point),
@@ -259,11 +260,13 @@ impl InterruptDescriptorTable {
 
     /// Loads the IDT into the CPU.
     pub unsafe fn load(&self) {
-        let ptr = DescriptorTablePointer::new(
-            self as *const Self as u64,
-            core::mem::size_of_val(self) as u16 - 1,
-        );
-        asm!("lidt [{}]", in(reg) ptr.as_ptr());
+        unsafe {
+            let ptr = DescriptorTablePointer::new(
+                self as *const Self as u64,
+                core::mem::size_of_val(self) as u16 - 1,
+            );
+            asm!("lidt [{}]", in(reg) ptr.as_ptr());
+        }
     }
 }
 
@@ -273,37 +276,41 @@ pub mod exception_handlers {
 
     // Panicking exception helper functions
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     unsafe extern "C" fn exception_message(msg_ptr: *const u8, msg_len: usize, rip: usize) -> ! {
-        let msg = core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg_ptr, msg_len));
-        panic!(
-            concat!("{msg}:\n", "- Caused by instruction at {rip:#x}\n",),
-            msg = msg,
-            rip = rip,
-        );
+        unsafe {
+            let msg = core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg_ptr, msg_len));
+            panic!(
+                concat!("{msg}:\n", "- Caused by instruction at {rip:#x}\n",),
+                msg = msg,
+                rip = rip,
+            );
+        }
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     unsafe extern "C" fn exception_message_with_err_code(
         msg_ptr: *const u8,
         msg_len: usize,
         error_code: u32,
         rip: usize,
     ) -> ! {
-        let msg = core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg_ptr, msg_len));
-        panic!(
-            concat!(
-                "{msg}:\n",
-                "- With error code {error_code:#X}\n",
-                "- Caused by instruction at {rip:#x}\n",
-            ),
-            msg = msg,
-            error_code = error_code,
-            rip = rip,
-        );
+        unsafe {
+            let msg = core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg_ptr, msg_len));
+            panic!(
+                concat!(
+                    "{msg}:\n",
+                    "- With error code {error_code:#X}\n",
+                    "- Caused by instruction at {rip:#x}\n",
+                ),
+                msg = msg,
+                error_code = error_code,
+                rip = rip,
+            );
+        }
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     unsafe extern "C" fn page_fault_exception_message(
         msg_ptr: *const u8,
         msg_len: usize,
@@ -311,46 +318,48 @@ pub mod exception_handlers {
         access_address: usize,
         rip: usize,
     ) -> ! {
-        let msg = core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg_ptr, msg_len));
-        panic!(
-            concat!(
-                "{msg}:\n",
-                "- With error code {error_code:#X}\n",
-                "- Caused by access to address {access_address:#x} by instruction at {rip:#x}\n",
-            ),
-            msg = msg,
-            error_code = error_code,
-            access_address = access_address,
-            rip = rip,
-        );
+        unsafe {
+            let msg = core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg_ptr, msg_len));
+            panic!(
+                concat!(
+                    "{msg}:\n",
+                    "- With error code {error_code:#X}\n",
+                    "- Caused by access to address {access_address:#x} by instruction at {rip:#x}\n",
+                ),
+                msg = msg,
+                error_code = error_code,
+                access_address = access_address,
+                rip = rip,
+            );
+        }
     }
 
     // Handlers
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "x86-interrupt" fn breakpoint(_interrupt_frame: InterruptFrame) {
         log::info!("Exception - Breakpoint");
     }
 
-    extern "x86-interrupt" {
-        pub fn divide_by_zero(interrupt_frame: InterruptFrame);
-        pub fn debug(interrupt_frame: InterruptFrame);
-        pub fn non_maskable_interrupt(interrupt_frame: InterruptFrame);
-        pub fn overflow(interrupt_frame: InterruptFrame);
-        pub fn bound_range_exceeded(interrupt_frame: InterruptFrame);
-        pub fn invalid_opcode(interrupt_frame: InterruptFrame);
-        pub fn device_not_available(interrupt_frame: InterruptFrame);
-        pub fn double_fault(interrupt_frame: InterruptFrame, error_code: u64) -> !;
-        pub fn invalid_tss(interrupt_frame: InterruptFrame, error_code: u64);
-        pub fn segment_not_present(interrupt_frame: InterruptFrame, error_code: u64);
-        pub fn stack_segment_fault(interrupt_frame: InterruptFrame, error_code: u64);
-        pub fn general_protection_fault(interrupt_frame: InterruptFrame, error_code: u64);
-        pub fn page_fault(interrupt_frame: InterruptFrame, error_code: u64);
-        pub fn x87_floating_point(interrupt_frame: InterruptFrame);
-        pub fn alignment_exception(interrupt_frame: InterruptFrame, error_code: u64);
-        pub fn machine_check(interrupt_frame: InterruptFrame) -> !;
-        pub fn simd_floating_point(interrupt_frame: InterruptFrame);
-        pub fn virtualization(interrupt_frame: InterruptFrame);
-        pub fn security(interrupt_frame: InterruptFrame, error_code: u64);
+    unsafe extern "x86-interrupt" {
+        pub unsafe fn divide_by_zero(interrupt_frame: InterruptFrame);
+        pub unsafe fn debug(interrupt_frame: InterruptFrame);
+        pub unsafe fn non_maskable_interrupt(interrupt_frame: InterruptFrame);
+        pub unsafe fn overflow(interrupt_frame: InterruptFrame);
+        pub unsafe fn bound_range_exceeded(interrupt_frame: InterruptFrame);
+        pub unsafe fn invalid_opcode(interrupt_frame: InterruptFrame);
+        pub unsafe fn device_not_available(interrupt_frame: InterruptFrame);
+        pub unsafe fn double_fault(interrupt_frame: InterruptFrame, error_code: u64) -> !;
+        pub unsafe fn invalid_tss(interrupt_frame: InterruptFrame, error_code: u64);
+        pub unsafe fn segment_not_present(interrupt_frame: InterruptFrame, error_code: u64);
+        pub unsafe fn stack_segment_fault(interrupt_frame: InterruptFrame, error_code: u64);
+        pub unsafe fn general_protection_fault(interrupt_frame: InterruptFrame, error_code: u64);
+        pub unsafe fn page_fault(interrupt_frame: InterruptFrame, error_code: u64);
+        pub unsafe fn x87_floating_point(interrupt_frame: InterruptFrame);
+        pub unsafe fn alignment_exception(interrupt_frame: InterruptFrame, error_code: u64);
+        pub unsafe fn machine_check(interrupt_frame: InterruptFrame) -> !;
+        pub unsafe fn simd_floating_point(interrupt_frame: InterruptFrame);
+        pub unsafe fn virtualization(interrupt_frame: InterruptFrame);
+        pub unsafe fn security(interrupt_frame: InterruptFrame, error_code: u64);
     }
 }

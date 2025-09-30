@@ -1,6 +1,5 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn;
 
 #[proc_macro_attribute]
 pub fn export_asm_all(_attr: TokenStream, input: TokenStream) -> TokenStream {
@@ -18,7 +17,7 @@ pub fn export_asm_all(_attr: TokenStream, input: TokenStream) -> TokenStream {
                 let asm_expanded = quote! {
                     ::core::arch::global_asm!(
                         concat!(".global \"", #asm_name, "\"\n\"", #asm_name, "\" = {value}"),
-                        value = const memoffset::offset_of!(#item_ident, #field_ident),
+                        value = const ::core::mem::offset_of!(#item_ident, #field_ident),
                     );
                 };
                 let asm_token_stream: proc_macro::TokenStream = asm_expanded.into();
@@ -29,12 +28,12 @@ pub fn export_asm_all(_attr: TokenStream, input: TokenStream) -> TokenStream {
             let mut current_value: usize = 0;
             for variant in data.variants.iter() {
                 assert!(matches!(variant.fields, syn::Fields::Unit));
-                let value = match variant.discriminant {
-                    Some((_, ref expr)) => {
-                        let syn::Expr::Lit(ref literal) = expr else {
+                let value = match &variant.discriminant {
+                    Some((_, expr)) => {
+                        let syn::Expr::Lit(literal) = expr else {
                             panic!("enum variant discriminants must be integer literals");
                         };
-                        let syn::Lit::Int(ref int_lit) = literal.lit else {
+                        let syn::Lit::Int(int_lit) = &literal.lit else {
                             panic!("enum variant discriminants must be integer literals");
                         };
                         int_lit.base10_parse().unwrap()

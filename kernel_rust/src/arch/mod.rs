@@ -1,8 +1,9 @@
-#[cfg(target_arch = "x86_64")]
-#[macro_use]
-mod x86_64;
-#[cfg(target_arch = "x86_64")]
-pub use x86_64::*;
-
-#[cfg(not(any(target_arch = "x86_64")))]
-compile_error!("Unsupported architecture");
+cfg_select! {
+    target_arch = "x86_64" => {
+        mod x86_64;
+        pub use x86_64::*;
+    }
+    _ => {
+        compile_error!("Unsupported architecture");
+    }
+}

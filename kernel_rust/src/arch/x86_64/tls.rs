@@ -2,10 +2,8 @@
 
 use super::apic::local::LocalApic;
 use super::idt::InterruptDescriptorTable;
-use super::msr;
-use super::page_allocation;
+use super::{msr, page_allocation, define_asm_symbol};
 use super::paging::PageTableEntry;
-use crate::define_asm_symbol;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use define_asm_symbol::export_asm_all;
@@ -60,23 +58,23 @@ impl Default for YieldInfo {
 
 define_asm_symbol!(
     "ThreadLocalStorage.yield_info.reason",
-    memoffset::offset_of!(ThreadLocalStorage, yield_info)
-        + memoffset::offset_of!(YieldInfo, reason),
+    core::mem::offset_of!(ThreadLocalStorage, yield_info)
+        + core::mem::offset_of!(YieldInfo, reason),
 );
 define_asm_symbol!(
     "ThreadLocalStorage.yield_info.exception_type",
-    memoffset::offset_of!(ThreadLocalStorage, yield_info)
-        + memoffset::offset_of!(YieldInfo, exception_type),
+    core::mem::offset_of!(ThreadLocalStorage, yield_info)
+        + core::mem::offset_of!(YieldInfo, exception_type),
 );
 define_asm_symbol!(
     "ThreadLocalStorage.yield_info.exception_error_code",
-    memoffset::offset_of!(ThreadLocalStorage, yield_info)
-        + memoffset::offset_of!(YieldInfo, exception_error_code),
+    core::mem::offset_of!(ThreadLocalStorage, yield_info)
+        + core::mem::offset_of!(YieldInfo, exception_error_code),
 );
 define_asm_symbol!(
     "ThreadLocalStorage.yield_info.page_fault_address",
-    memoffset::offset_of!(ThreadLocalStorage, yield_info)
-        + memoffset::offset_of!(YieldInfo, page_fault_address),
+    core::mem::offset_of!(ThreadLocalStorage, yield_info)
+        + core::mem::offset_of!(YieldInfo, page_fault_address),
 );
 
 #[repr(u64)]
@@ -120,27 +118,29 @@ pub enum ExceptionType {
 
 unsafe impl Sync for ThreadLocalStorage {}
 
-extern "C" {
+unsafe extern "C" {
     #[allow(improper_ctypes)]
     static mut TLS: ThreadLocalStorage;
 }
 
 /// Initialises the thread local storage. Must only be called once.
 pub unsafe fn init() {
-    let tls_size = core::mem::size_of::<ThreadLocalStorage>();
-    let start_address = &raw const TLS as usize & !0xFFF;
-    for address in (start_address..start_address + tls_size).step_by(4096) {
-        page_allocation::map_page(address, PageTableEntry::READ_WRITE)
-            .expect("failed to allocate thread local storage");
-        log::debug!("Allocated TLS page at {address:#x}");
+    unsafe {
+        let tls_size = core::mem::size_of::<ThreadLocalStorage>();
+        let start_address = &raw const TLS as usize & !0xFFF;
+        for address in (start_address..start_address + tls_size).step_by(4096) {
+            page_allocation::map_page(address, PageTableEntry::READ_WRITE)
+                .expect("failed to allocate thread local storage");
+            log::debug!("Allocated TLS page at {address:#x}");
+        }
+        TLS = ThreadLocalStorage {
+            self_pointer: NonNull::new(&raw mut TLS).unwrap(),
+            local_apic: Default::default(),
+            idt: InterruptDescriptorTable::new(),
+            yield_info: Default::default(),
+        };
+        msr::write(msr::GS_BASE, &raw const TLS as u64);
     }
-    TLS = ThreadLocalStorage {
-        self_pointer: NonNull::new(&raw mut TLS).unwrap(),
-        local_apic: Default::default(),
-        idt: InterruptDescriptorTable::new(),
-        yield_info: Default::default(),
-    };
-    msr::write(msr::GS_BASE, &raw const TLS as u64);
 }
 
 /// Returns a pointer to the thread local storage.

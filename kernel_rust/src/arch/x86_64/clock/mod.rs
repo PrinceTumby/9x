@@ -82,9 +82,21 @@ pub struct Timer {
     pub acknowledge_countdown_interrupt: unsafe fn(),
 }
 
-// APIC is only ever true if the exact tick rate is able to be found via CPUID
-define_clock_list!(CalibrationTimers, [hpet, apic, pit, rtc, cmos,]);
-define_clock_list!(Timers, [apic, hpet, pit]);
+#[rustfmt::skip]
+define_clock_list!(CalibrationTimers, [
+    hpet,
+    // Only valid if the exact tick rate is able to be found with CPUID.
+    apic,
+    pit,
+    rtc,
+    cmos,
+]);
+#[rustfmt::skip]
+define_clock_list!(Timers, [
+    apic,
+    hpet,
+    pit,
+]);
 #[rustfmt::skip]
 define_clock_list!(Counters, [
     // True counters
@@ -125,6 +137,7 @@ pub struct Manager {
 pub static MANAGER: Mutex<Manager> = Mutex::new(Manager::new());
 
 impl Manager {
+    #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             calibration_timer: dummy_clock::CALIBRATION_TIMER,

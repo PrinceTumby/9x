@@ -1,5 +1,5 @@
 OUTPUT_FORMAT(elf64-x86-64)
-ENTRY(limine_entry)
+ENTRY(kernel_main)
 
 KERNEL_BASE = 0xffffffff80000000;
 KERNEL_END = 0xffffffffffffffff;
@@ -41,7 +41,6 @@ SECTIONS
     .text ALIGN(4K) : {
         *(.text*)
     } :text
-    /* PROVIDE(__etext = .); */
     .data ALIGN(4K) : {
         *(.data*)
     } :data

@@ -1,6 +1,6 @@
-use crate::define_asm_symbol;
+use super::define_asm_symbol;
 
-/// Arguments passed to the kernel when the kernel is loaded.
+/// Arguments passed to the kernel at load time.
 #[repr(C)]
 #[derive(Clone)]
 pub struct Args {
@@ -16,7 +16,7 @@ pub struct Args {
 // The page table address is used in assembly, so export it here
 define_asm_symbol!(
     "kernel_args::Args.page_table_address",
-    memoffset::offset_of!(Args, page_table_address)
+    core::mem::offset_of!(Args, page_table_address)
 );
 
 #[repr(C)]
@@ -35,7 +35,9 @@ impl<T> Slice<T> {
     }
 
     pub unsafe fn get_slice<'a>(&self) -> &'a [T] {
-        return core::slice::from_raw_parts(self.ptr, self.len);
+        unsafe {
+            core::slice::from_raw_parts(self.ptr, self.len)
+        }
     }
 }
 
@@ -55,7 +57,9 @@ impl<T> MutSlice<T> {
     }
 
     pub unsafe fn get_slice_mut<'a>(&self) -> &'a mut [T] {
-        return core::slice::from_raw_parts_mut(self.ptr, self.len);
+        unsafe {
+            core::slice::from_raw_parts_mut(self.ptr, self.len)
+        }
     }
 }
 
